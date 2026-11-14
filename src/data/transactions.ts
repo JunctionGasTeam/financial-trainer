@@ -1,0 +1,163 @@
+import type { SQLiteDatabase } from 'expo-sqlite';
+
+export const CUSTOMER_ID = 'CUST00001';
+
+export type MonthlyCategory = { category: string; amount: number; color: string };
+export type MonthlyFlow = { total: number; categories: MonthlyCategory[] };
+export type MonthlyTransactionSummary = { spending: MonthlyFlow; income: MonthlyFlow };
+export type AnalysisWindow = {
+  startMonth: string;
+  endMonth: string;
+  requestedMonths: string[];
+  availableMonths: string[];
+  missingMonths: string[];
+};
+export type RecentTransactionData = {
+  window: AnalysisWindow;
+  monthlyData: Record<string, MonthlyTransactionSummary>;
+};
+export type TransactionMonthRange = { firstMonth: string; lastMonth: string };
+
+type AggregateRow = {
+  month: string;
+  category: string;
+  flow: 'spending' | 'income';
+  amount: number;
+};
+
+export async function verifyTransactionsDatabase(db: SQLiteDatabase) {
+  const result = await db.getFirstAsync<{ transactionCount: number }>(
+    'SELECT COUNT(*) AS transactionCount FROM transactions WHERE customer_id = ?',
+    CUSTOMER_ID,
+  );
+  if (!result?.transactionCount) {
+    throw new Error(`No SQLite transactions found for ${CUSTOMER_ID}.`);
+  }
+}
+
+const categoryColors: Record<string, string> = {
+  Entertainment: '#d17655',
+  Groceries: '#008044',
+  Health: '#76b58e',
+  'Home & Tech': '#a1aaa7',
+  Housing: '#3b9b67',
+  'Invest Deposit': '#91a84c',
+  Lifestyle: '#d5a338',
+  Restaurants: '#6da8a4',
+  Salary: '#008044',
+  Transportation: '#8d6da8',
+  Travel: '#5c8db0',
+  Utilities: '#b45d69',
+};
+
+const fallbackColors = ['#5c8db0', '#8d6da8', '#6da8a4', '#d17655', '#91a84c', '#a1aaa7'];
+
+function colorForCategory(category: string) {
+  if (categoryColors[category]) return categoryColors[category];
+  const hash = [...category].reduce((value, character) => value + character.charCodeAt(0), 0);
+  return fallbackColors[hash % fallbackColors.length];
+}
+
+export async function getTransactionMonthRange(
+  db: SQLiteDatabase,
+  customerId = CUSTOMER_ID,
+): Promise<TransactionMonthRange | null> {
+  const result = await db.getFirstAsync<{ firstMonth: string | null; lastMonth: string | null }>(
+    `SELECT MIN(substr(tx_date, 1, 7)) AS firstMonth,
+            MAX(substr(tx_date, 1, 7)) AS lastMonth
+     FROM transactions
+     WHERE customer_id = ? AND tx_amount_eur != 0`,
+    customerId,
+  );
+
+  if (!result?.firstMonth || !result.lastMonth) return null;
+  return { firstMonth: result.firstMonth, lastMonth: result.lastMonth };
+}
+
+export async function getMonthlyTransactionSummary(
+  db: SQLiteDatabase,
+  month: string,
+  customerId = CUSTOMER_ID,
+): Promise<MonthlyTransactionSummary> {
+  const monthlyData = await getTransactionSummariesBetween(db, month, month, customerId);
+  return monthlyData[month] ?? emptyMonthlySummary();
+}
+
+export async function getRecentTransactionData(
+  db: SQLiteDatabase,
+  now = new Date(),
+  customerId = CUSTOMER_ID,
+): Promise<RecentTransactionData> {
+  const requestedMonths = getLastTwelveMonthKeys(now);
+  const startMonth = requestedMonths[0];
+  const endMonth = requestedMonths[requestedMonths.length - 1];
+  const monthlyData = await getTransactionSummariesBetween(db, startMonth, endMonth, customerId);
+  const availableMonths = Object.keys(monthlyData).sort();
+  const missingMonths = requestedMonths.filter((month) => !availableMonths.includes(month));
+
+  return {
+    window: { startMonth, endMonth, requestedMonths, availableMonths, missingMonths },
+    monthlyData,
+  };
+}
+
+export function getLastTwelveMonthKeys(now = new Date()) {
+  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const firstMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 11, 1);
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + index, 1);
+    return `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
+  });
+}
+
+async function getTransactionSummariesBetween(
+  db: SQLiteDatabase,
+  startMonth: string,
+  endMonth: string,
+  customerId: string,
+): Promise<Record<string, MonthlyTransactionSummary>> {
+  const nextMonth = nextMonthKey(endMonth);
+  const rows = await db.getAllAsync<AggregateRow>(
+    `SELECT substr(tx_date, 1, 7) AS month,
+            category,
+            CASE WHEN tx_amount_eur < 0 THEN 'spending' ELSE 'income' END AS flow,
+            ROUND(SUM(ABS(tx_amount_eur)), 2) AS amount
+     FROM transactions
+     WHERE customer_id = ?
+       AND tx_date >= ?
+       AND tx_date < ?
+       AND tx_amount_eur != 0
+     GROUP BY substr(tx_date, 1, 7), category, flow
+     ORDER BY month DESC, amount DESC`,
+    customerId,
+    `${startMonth}-01`,
+    `${nextMonth}-01`,
+  );
+
+  const summaries: Record<string, MonthlyTransactionSummary> = {};
+  for (const row of rows) {
+    const summary = summaries[row.month] ?? (summaries[row.month] = emptyMonthlySummary());
+    const category = { category: row.category, amount: row.amount, color: colorForCategory(row.category) };
+    summary[row.flow].categories.push(category);
+    summary[row.flow].total = roundMoney(summary[row.flow].total + row.amount);
+  }
+
+  return summaries;
+}
+
+function emptyMonthlySummary(): MonthlyTransactionSummary {
+  return {
+    spending: { total: 0, categories: [] },
+    income: { total: 0, categories: [] },
+  };
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function nextMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const nextMonth = new Date(year, month, 1);
+  return `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+}

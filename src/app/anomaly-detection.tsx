@@ -1,31 +1,50 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { router } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { analyzeWithGemini, formatAnomalyMonth, getCurrentAnalysisWindow, type AgentResult, type AnalysisWindow } from '@/features/anomaly/api';
+import { getRecentTransactionData, type AnalysisWindow } from '@/data/transactions';
+import { analyzeWithGemini, formatAnomalyMonth, type AgentResult } from '@/features/anomaly/api';
 import { useTheme } from '@/hooks/use-theme';
 
 const green = '#008044';
 const analysts = ['Spending trend', 'Category shifts', 'Cash flow'];
 
 export default function AnomalyDetectionScreen() {
+  const db = useSQLiteContext();
   const theme = useTheme();
   const [results, setResults] = useState<AgentResult[] | null>(null);
   const [orchestratorSummary, setOrchestratorSummary] = useState('');
-  const [analysisWindow, setAnalysisWindow] = useState<AnalysisWindow>(() => getCurrentAnalysisWindow());
+  const [analysisWindow, setAnalysisWindow] = useState<AnalysisWindow | null>(null);
+  const [loadingWindow, setLoadingWindow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    getRecentTransactionData(db).then(({ window }) => {
+      if (active) setAnalysisWindow(window);
+    }).catch(() => {
+      if (active) setError('Could not load customer transactions from SQLite.');
+    }).finally(() => {
+      if (active) setLoadingWindow(false);
+    });
+    return () => { active = false; };
+  }, [db]);
 
   async function analyze() {
     setBusy(true);
     setError('');
-    const window = getCurrentAnalysisWindow();
-    setAnalysisWindow(window);
     try {
-      const analysis = await analyzeWithGemini(window);
+      const recentData = await getRecentTransactionData(db);
+      setAnalysisWindow(recentData.window);
+      if (recentData.window.availableMonths.length === 0) {
+        throw new Error('No customer transactions were found in the last 12 months.');
+      }
+      const analysis = await analyzeWithGemini(recentData.monthlyData, recentData.window);
       setResults(analysis.results);
       setOrchestratorSummary(analysis.overallSummary);
     } catch (cause) {
@@ -71,10 +90,14 @@ export default function AnomalyDetectionScreen() {
               </ThemedText>
             </View>
           </View>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.periodNote}>
-            {formatAnomalyMonth(analysisWindow.startMonth)} – {formatAnomalyMonth(analysisWindow.endMonth)} · {analysisWindow.availableMonths.length} of 12 months have transaction data.
-            {analysisWindow.missingMonths.length > 0 ? ` Missing data: ${analysisWindow.missingMonths.map(formatAnomalyMonth).join(', ')}.` : ''}
-          </ThemedText>
+          {analysisWindow ? (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.periodNote}>
+              {formatAnomalyMonth(analysisWindow.startMonth)} – {formatAnomalyMonth(analysisWindow.endMonth)} · {analysisWindow.availableMonths.length} of 12 months have transaction data.
+              {analysisWindow.missingMonths.length > 0 ? ` Missing data: ${analysisWindow.missingMonths.map(formatAnomalyMonth).join(', ')}.` : ''}
+            </ThemedText>
+          ) : loadingWindow ? (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.periodNote}>Loading transaction months from SQLite…</ThemedText>
+          ) : null}
 
           <Pressable accessibilityRole="button" disabled={busy} onPress={analyze} style={[styles.primaryButton, busy && styles.disabled]}>
             {busy ? (

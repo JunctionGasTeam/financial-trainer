@@ -1,6 +1,8 @@
-import { useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { SymbolView } from 'expo-symbols';
+import { useSQLiteContext } from 'expo-sqlite';
 import {
+  ActivityIndicator,
   Pressable,
   FlatList,
   Modal,
@@ -18,38 +20,80 @@ import { Circle, Path, Svg } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
-  monthlyTransactionSummary,
+  getMonthlyTransactionSummary,
+  getTransactionMonthRange,
+  type MonthlyTransactionSummary,
   type MonthlyCategory,
-  type MonthlyFlow,
-} from '@/data/transaction-summary';
+  type TransactionMonthRange,
+} from '@/data/transactions';
 import { useTheme } from '@/hooks/use-theme';
 
 const bankGreen = '#008044';
-const emptyFlow: MonthlyFlow = { total: 0, categories: [] };
-const latestTransactionMonth = getLatestTransactionMonth();
-const monthOptions = createMonthOptions(getCurrentMonthKey());
+const emptySummary: MonthlyTransactionSummary = {
+  spending: { total: 0, categories: [] },
+  income: { total: 0, categories: [] },
+};
 
 type PageIndex = 0 | 1;
 
 export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
+  const db = useSQLiteContext();
   const { width } = useWindowDimensions();
   const [activePage, setActivePage] = useState<PageIndex>(0);
-  const [selectedMonth, setSelectedMonth] = useState(latestTransactionMonth);
+  const [monthRange, setMonthRange] = useState<TransactionMonthRange | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [loadedMonth, setLoadedMonth] = useState('');
+  const [monthSummary, setMonthSummary] = useState(emptySummary);
+  const [loadError, setLoadError] = useState('');
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
   const pagerRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const safeAreaInsets = useSafeAreaInsets();
   const theme = useTheme();
-  const monthSummary = monthlyTransactionSummary[selectedMonth] ?? {
-    spending: emptyFlow,
-    income: emptyFlow,
-  };
-  const monthLabel = formatMonth(selectedMonth);
+  const monthOptions = useMemo(
+    () => createMonthOptions(monthRange?.firstMonth, getCurrentMonthKey()),
+    [monthRange],
+  );
+  const monthLabel = selectedMonth ? formatMonth(selectedMonth) : 'Loading months…';
   const monthMenuHeight = Math.min(280, monthOptions.length * 44);
   const monthMenuTop = safeAreaInsets.top + 56 + 10 + 46 + 6;
+  const loadingSummary = !loadError && (!selectedMonth || loadedMonth !== selectedMonth);
   const pages = [
     { key: 'spending', label: 'Spending', centerLabel: 'SPENT', data: monthSummary.spending },
     { key: 'income', label: 'Income', centerLabel: 'RECEIVED', data: monthSummary.income },
   ] as const;
+
+  useEffect(() => {
+    let active = true;
+    getTransactionMonthRange(db).then((range) => {
+      if (!active) return;
+      setMonthRange(range);
+      if (range) {
+        setSelectedMonth(range.lastMonth);
+      } else {
+        setLoadError('No transactions are available for this customer.');
+      }
+    }).catch(() => {
+      if (active) {
+        setLoadError('Could not load transactions from the SQLite database.');
+      }
+    });
+    return () => { active = false; };
+  }, [db]);
+
+  useEffect(() => {
+    if (!selectedMonth) return;
+    let active = true;
+    getMonthlyTransactionSummary(db, selectedMonth).then((summary) => {
+      if (active) {
+        setMonthSummary(summary);
+        setLoadedMonth(selectedMonth);
+        setLoadError('');
+      }
+    }).catch(() => {
+      if (active) setLoadError('Could not load this month from the SQLite database.');
+    });
+    return () => { active = false; };
+  }, [db, selectedMonth]);
 
   function selectPage(index: PageIndex) {
     setActivePage(index);
@@ -113,26 +157,37 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
           })}
         </View>
 
-        <ScrollView
-          ref={pagerRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handlePageEnd}
-          style={styles.pager}>
-          {pages.map((page) => (
-            <View key={page.key} style={{ width, flex: 1 }}>
-              <CategoryPage
-                width={width}
-                label={page.label}
-                centerLabel={page.centerLabel}
-                total={page.data.total}
-                categories={page.data.categories}
-                monthLabel={monthLabel}
-              />
-            </View>
-          ))}
-        </ScrollView>
+        {loadingSummary ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator color={bankGreen} />
+            <ThemedText type="small" themeColor="textSecondary">{loadError || 'Loading transactions…'}</ThemedText>
+          </View>
+        ) : loadError ? (
+          <View style={styles.loadingState}>
+            <ThemedText type="small" themeColor="textSecondary">{loadError}</ThemedText>
+          </View>
+        ) : (
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={handlePageEnd}
+            style={styles.pager}>
+            {pages.map((page) => (
+              <View key={page.key} style={{ width, flex: 1 }}>
+                <CategoryPage
+                  width={width}
+                  label={page.label}
+                  centerLabel={page.centerLabel}
+                  total={page.data.total}
+                  categories={page.data.categories}
+                  monthLabel={monthLabel}
+                />
+              </View>
+            ))}
+          </ScrollView>
+        )}
       </SafeAreaView>
 
       <Modal
@@ -164,6 +219,7 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
                   accessibilityRole="button"
                   accessibilityState={{ selected: month === selectedMonth }}
                   onPress={() => {
+                    setLoadError('');
                     setSelectedMonth(month);
                     setMonthMenuOpen(false);
                   }}
@@ -295,19 +351,15 @@ function formatEuro(amount: number) {
   return new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(amount);
 }
 
-function getLatestTransactionMonth() {
-  return Object.keys(monthlyTransactionSummary).sort().at(-1) ?? getCurrentMonthKey();
-}
-
 function getCurrentMonthKey() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function createMonthOptions(currentMonth: string) {
-  const earliestMonth = Object.keys(monthlyTransactionSummary).sort()[0] ?? currentMonth;
+function createMonthOptions(earliestMonth: string | undefined, currentMonth: string) {
+  const firstMonth = earliestMonth ?? currentMonth;
   const [currentYear, currentMonthNumber] = currentMonth.split('-').map(Number);
-  const [earliestYear, earliestMonthNumber] = earliestMonth.split('-').map(Number);
+  const [earliestYear, earliestMonthNumber] = firstMonth.split('-').map(Number);
   const months: string[] = [];
   let cursor = new Date(currentYear, currentMonthNumber - 1, 1);
   const earliest = new Date(earliestYear, earliestMonthNumber - 1, 1);
@@ -430,6 +482,12 @@ const styles = StyleSheet.create({
   },
   pager: {
     flex: 1,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
   },
   pageContent: {
     alignItems: 'center',

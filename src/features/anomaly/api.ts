@@ -1,5 +1,5 @@
-import { monthlyTransactionSummary } from '@/data/transaction-summary';
 import Constants from 'expo-constants';
+import type { AnalysisWindow, MonthlyTransactionSummary } from '@/data/transactions';
 
 export type Finding = {
   id: string;
@@ -22,41 +22,14 @@ export type GeminiAnalysis = {
   workflow: string;
 };
 
-export type AnalysisWindow = {
-  startMonth: string;
-  endMonth: string;
-  requestedMonths: string[];
-  availableMonths: string[];
-  missingMonths: string[];
-};
-
 const configuredApiUrl = process.env.EXPO_PUBLIC_GEMINI_API_URL?.trim();
 const expoDevHost = Constants.expoConfig?.hostUri?.split(':')[0];
 const apiUrl = (configuredApiUrl || (expoDevHost ? `http://${expoDevHost}:8787` : 'http://localhost:8787')).replace(/\/$/, '');
 
-export function getCurrentAnalysisWindow(now = new Date()): AnalysisWindow {
-  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const firstMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 11, 1);
-  const requestedMonths = Array.from({ length: 12 }, (_, index) => {
-    const month = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + index, 1);
-    return `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const availableMonths = requestedMonths.filter((month) => Object.hasOwn(monthlyTransactionSummary, month));
-  const missingMonths = requestedMonths.filter((month) => !availableMonths.includes(month));
-
-  return {
-    startMonth: requestedMonths[0],
-    endMonth: requestedMonths[requestedMonths.length - 1],
-    requestedMonths,
-    availableMonths,
-    missingMonths,
-  };
-}
-
-export async function analyzeWithGemini(window: AnalysisWindow): Promise<GeminiAnalysis> {
-  const monthlyData = Object.fromEntries(
-    window.availableMonths.map((month) => [month, monthlyTransactionSummary[month]]),
-  );
+export async function analyzeWithGemini(
+  monthlyData: Record<string, MonthlyTransactionSummary>,
+  window: AnalysisWindow,
+): Promise<GeminiAnalysis> {
   const response = await fetch(`${apiUrl}/api/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
