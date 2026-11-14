@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ChatSuggestions } from '@/components/chat-suggestions';
+import { InvestBento } from '@/components/invest-bento';
 import { fallbackSuggestions, sendChatMessage, type ChatMessage } from '@/features/chat/api';
 import { useRecentFinanceData } from '@/hooks/use-recent-finance-data';
 
@@ -35,6 +36,7 @@ const suggestions = [
   'Where did my money go last month?',
   'How did my income change?',
   'Am I spending more than I earn?',
+  'Where should I invest spare money?',
 ];
 
 let nextId = 0;
@@ -120,7 +122,7 @@ export function FinanceChatScreen() {
     setError('');
     setPending(true);
     try {
-      const { reply, suggestions: followUps, shortcut } = await sendChatMessage(history, data.monthlyData, data.window);
+      const { reply, suggestions: followUps, shortcut, invest } = await sendChatMessage(history, data.monthlyData, data.window);
       setMessages((current) => [
         ...current,
         {
@@ -129,6 +131,7 @@ export function FinanceChatScreen() {
           text: reply,
           suggestions: followUps.length ? followUps : fallbackSuggestions(history),
           shortcut,
+          invest: invest ?? undefined,
         },
       ]);
     } catch (caught) {
@@ -196,6 +199,7 @@ export function FinanceChatScreen() {
                     <View style={[styles.bubble, styles.coachBubble]}>
                       <Text style={styles.coachText}>{message.text}</Text>
                     </View>
+                    {message.invest && <InvestBento advice={message.invest} />}
                     {/* Only the latest answer offers follow-ups; they vanish once a new question is sent. */}
                     {index === messages.length - 1 && !pending && (
                       <ChatSuggestions

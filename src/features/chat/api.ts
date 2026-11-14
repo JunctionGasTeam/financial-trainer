@@ -9,13 +9,37 @@ export type ChatMessage = {
   text: string;
   suggestions?: string[];
   shortcut?: ChatShortcut;
+  invest?: InvestAdvice;
 };
+
+export type InvestAsset = 'stocks' | 'bonds' | 'gold';
+
+export type InvestAllocation = { asset: InvestAsset; share: number; amount: number };
+
+export type InvestAdvice = { total: number; allocations: InvestAllocation[] };
 
 export type ChatReply = {
   reply: string;
   suggestions: string[];
   shortcut: ChatShortcut;
+  invest: InvestAdvice | null;
 };
+
+const investAssets: readonly InvestAsset[] = ['stocks', 'bonds', 'gold'];
+
+function parseInvest(value: unknown): InvestAdvice | null {
+  if (!value || typeof value !== 'object') return null;
+  const { total, allocations } = value as { total?: unknown; allocations?: unknown };
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0 || !Array.isArray(allocations)) return null;
+  const parsed = allocations.flatMap((item): InvestAllocation[] => {
+    if (!item || typeof item !== 'object') return [];
+    const { asset, share, amount } = item as Record<string, unknown>;
+    if (!investAssets.includes(asset as InvestAsset) || typeof share !== 'number' || typeof amount !== 'number' ||
+      !Number.isFinite(share) || !Number.isFinite(amount)) return [];
+    return [{ asset: asset as InvestAsset, share, amount }];
+  });
+  return parsed.length === investAssets.length ? { total, allocations: parsed } : null;
+}
 
 const shortcuts: readonly ChatShortcut[] = ['spending', 'anomaly', 'savings', 'none'];
 
@@ -58,5 +82,5 @@ export async function sendChatMessage(
     ? result.suggestions.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3)
     : [];
   const shortcut: ChatShortcut = shortcuts.includes(result.shortcut) ? result.shortcut : 'none';
-  return { reply: result.reply.trim(), suggestions, shortcut };
+  return { reply: result.reply.trim(), suggestions, shortcut, invest: parseInvest(result.invest) };
 }
