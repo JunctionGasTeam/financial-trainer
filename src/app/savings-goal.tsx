@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useSQLiteContext } from 'expo-sqlite';
-import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -11,12 +10,23 @@ import { getRecentTransactionData, type RecentTransactionData } from '@/data/tra
 import { getSavingsCoach, type SavingsCoach } from '@/features/savings/api';
 import { analyzeSpendingHabits, buildSavingsScenarios } from '@/features/savings/plan';
 import { useTheme } from '@/hooks/use-theme';
+import { CloseButton, closeButtonSize } from '@/components/ui/close-button';
+import { useWipe, WipeScreen } from '@/components/ui/wipe-screen';
 
 const green = '#008044';
 const timelineOptions = [6, 12, 18, 24, 36, 60];
 const formatEuro = (amount: number) => new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(amount);
 
 export default function SavingsGoalScreen() {
+  return (
+    <WipeScreen from="right">
+      <SavingsGoal />
+    </WipeScreen>
+  );
+}
+
+function SavingsGoal() {
+  const { close } = useWipe();
   const db = useSQLiteContext();
   const theme = useTheme();
   const [transactionData, setTransactionData] = useState<RecentTransactionData | null>(null);
@@ -129,9 +139,7 @@ export default function SavingsGoalScreen() {
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <View style={[styles.header, { borderBottomColor: theme.backgroundSelected }]}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close savings goal" hitSlop={12} onPress={() => router.back()} style={[styles.closeButton, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.closeGlyph, { color: theme.text }]}>×</Text>
-          </Pressable>
+          <CloseButton accessibilityLabel="Close savings goal" onPress={close} />
           <ThemedText type="smallBold">Savings goal</ThemedText>
           <View style={styles.headerBalance} />
         </View>
@@ -299,9 +307,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
   header: { height: 72, paddingTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, borderBottomWidth: StyleSheet.hairlineWidth },
-  closeButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  closeGlyph: { fontSize: 29, lineHeight: 32, fontWeight: '300' },
-  headerBalance: { width: 48 },
+  headerBalance: { width: closeButtonSize },
   content: { padding: 20, paddingTop: 20, paddingBottom: 42, gap: 16 },
   eyebrow: { color: green, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
   title: { marginTop: -9, fontSize: 29, lineHeight: 36 },

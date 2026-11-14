@@ -43,3 +43,5 @@ example
 /android
 
 *.sqlite
+# Large raw dataset (363 MB, over GitHub limit)
+docs/tx_junction_transactions.csv

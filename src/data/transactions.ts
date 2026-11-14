@@ -257,3 +257,35 @@ function nextMonthKey(monthKey: string) {
   const nextMonth = new Date(year, month, 1);
   return `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
 }
+
+export type CustomerTransaction = {
+  date: string;
+  category: string;
+  amount: number;
+  balanceAfter: number;
+  mccCode: string | null;
+};
+
+/** All of one customer's transactions in chronological (file) order. */
+export async function getCustomerTransactions(
+  db: SQLiteDatabase,
+  customerId = CUSTOMER_ID,
+): Promise<CustomerTransaction[]> {
+  return db.getAllAsync<CustomerTransaction>(
+    `SELECT tx_date AS date,
+            category,
+            tx_amount_eur AS amount,
+            balance_after_eur AS balanceAfter,
+            mcc_code AS mccCode
+     FROM transactions
+     WHERE customer_id = ?
+     ORDER BY tx_date, rowid`,
+    customerId,
+  );
+}
+
+/** The date the app treats as today: the last date in the dataset (SPEC.md 6.1). */
+export async function getAsOfDate(db: SQLiteDatabase): Promise<string | null> {
+  const result = await db.getFirstAsync<{ asOf: string | null }>('SELECT MAX(tx_date) AS asOf FROM transactions');
+  return result?.asOf ?? null;
+}

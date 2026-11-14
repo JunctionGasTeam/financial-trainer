@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SymbolView } from 'expo-symbols';
 import {
   ActivityIndicator,
-  BackHandler,
-  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -16,21 +14,19 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { Easing, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { scheduleOnRN } from 'react-native-worklets';
 
 import { ChatSuggestions } from '@/components/chat-suggestions';
 import { InvestBento } from '@/components/invest-bento';
 import { fallbackSuggestions, sendChatMessage, type ChatMessage } from '@/features/chat/api';
 import { useRecentFinanceData } from '@/hooks/use-recent-finance-data';
+import { CloseButton } from '@/components/ui/close-button';
+import { useWipe, WipeScreen } from '@/components/ui/wipe-screen';
 
 const lightGreen = '#e2f3e8';
 const bankGreen = '#008044';
 const ink = '#10201B';
 const inkMuted = '#4f615b';
-const openDuration = 420;
-const closeDuration = 360;
 
 const suggestions = [
   'Where did my money go last month?',
@@ -41,31 +37,26 @@ const suggestions = [
 
 let nextId = 0;
 const makeId = () => `msg-${Date.now()}-${(nextId += 1)}`;
-const goBack = () => router.back();
 
 export function FinanceChatScreen() {
+  return (
+    <WipeScreen color={lightGreen}>
+      <FinanceChat />
+    </WipeScreen>
+  );
+}
+
+function FinanceChat() {
+  const { close, opened } = useWipe();
   const { data, error: loadError } = useRecentFinanceData();
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const closingRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const ready = Boolean(data && Object.keys(data.monthlyData).length);
   const canSend = ready && !pending && draft.trim().length > 0;
-
-  // The green layer rises from below the screen; content fades in once it is nearly full.
-  const wipeHeight = Dimensions.get('screen').height;
-  const progress = useSharedValue(0);
-  const wipeStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (1 - progress.value) * wipeHeight }],
-    borderTopLeftRadius: interpolate(progress.value, [0, 1], [40, 0]),
-    borderTopRightRadius: interpolate(progress.value, [0, 1], [40, 0]),
-  }));
-  const contentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0.7, 1], [0, 1], 'clamp'),
-  }));
 
   const [keyboardShown, setKeyboardShown] = useState(false);
   useEffect(() => {
@@ -77,36 +68,10 @@ export function FinanceChatScreen() {
     };
   }, []);
 
-  const [opened, setOpened] = useState(false);
-  const focusInput = useCallback(() => setOpened(true), []);
-
   // Focus once the wipe has finished and the data has loaded (the input is disabled until then).
   useEffect(() => {
     if (opened && ready) inputRef.current?.focus();
   }, [opened, ready]);
-
-  useEffect(() => {
-    progress.set(withTiming(1, { duration: openDuration, easing: Easing.out(Easing.cubic) }, (finished) => {
-      if (finished) scheduleOnRN(focusInput);
-    }));
-  }, [progress, focusInput]);
-
-  const close = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    Keyboard.dismiss();
-    progress.set(withTiming(0, { duration: closeDuration, easing: Easing.in(Easing.cubic) }, () => {
-      scheduleOnRN(goBack);
-    }));
-  }, [progress]);
-
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      close();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [close]);
 
   useEffect(() => {
     const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
@@ -142,139 +107,117 @@ export function FinanceChatScreen() {
   }
 
   return (
-    <View style={styles.root}>
+    <>
       <StatusBar style="dark" />
-      <Animated.View pointerEvents="none" style={[styles.wipe, { height: wipeHeight }, wipeStyle]} />
-
-      <Animated.View style={[styles.flex, contentStyle]}>
-        <SafeAreaView style={styles.flex} edges={keyboardShown ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}>
-          <KeyboardAvoidingView behavior="padding" style={styles.flex}>
-            <View style={styles.header}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close chat"
-                hitSlop={12}
-                onPress={close}
-                style={({ pressed }) => [styles.closeButton, pressed && styles.dimmed]}>
-                <Text style={styles.closeGlyph}>×</Text>
-              </Pressable>
-              <View style={styles.headerTitle}>
-                <Text style={styles.title}>Coach</Text>
-                <View style={styles.coachDot}>
-                  <SymbolView
-                    name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
-                    tintColor={bankGreen}
-                    size={18}
-                  />
-                </View>
+      <SafeAreaView style={styles.flex} edges={keyboardShown ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}>
+        <KeyboardAvoidingView behavior="padding" style={styles.flex}>
+          <View style={styles.header}>
+            <CloseButton accessibilityLabel="Close chat" onPress={close} />
+            <View style={styles.headerTitle}>
+              <Text style={styles.title}>Coach</Text>
+              <View style={styles.coachDot}>
+                <SymbolView
+                  name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
+                  tintColor={bankGreen}
+                  size={18}
+                />
               </View>
             </View>
+          </View>
 
-            <ScrollView
-              ref={scrollRef}
-              style={styles.flex}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive">
-              {messages.length === 0 && (
-                <View style={styles.emptyState}>
-                  <Text style={styles.intro}>Ask anything about your own money.</Text>
-                  <Text style={styles.introSub}>
-                    I answer from your last 12 months of transactions.
-                  </Text>
-                  {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
-                  {opened && (
-                    <ChatSuggestions suggestions={suggestions} disabled={!ready || pending} onPick={send} />
+          <ScrollView
+            ref={scrollRef}
+            style={styles.flex}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive">
+            {messages.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.intro}>Ask anything about your own money.</Text>
+                <Text style={styles.introSub}>
+                  I answer from your last 12 months of transactions.
+                </Text>
+                {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
+                {opened && (
+                  <ChatSuggestions suggestions={suggestions} disabled={!ready || pending} onPick={send} />
+                )}
+              </View>
+            )}
+
+            {messages.map((message, index) =>
+              message.role === 'user' ? (
+                <View key={message.id} style={[styles.bubble, styles.userBubble]}>
+                  <Text style={styles.userText}>{message.text}</Text>
+                </View>
+              ) : (
+                <View key={message.id} style={styles.coachTurn}>
+                  <View style={[styles.bubble, styles.coachBubble]}>
+                    <Text style={styles.coachText}>{message.text}</Text>
+                  </View>
+                  {message.invest && <InvestBento advice={message.invest} />}
+                  {/* Only the latest answer offers follow-ups; they vanish once a new question is sent. */}
+                  {index === messages.length - 1 && !pending && (
+                    <ChatSuggestions
+                      suggestions={message.suggestions ?? []}
+                      shortcut={message.shortcut}
+                      onPick={send}
+                      onShortcut={(href) => router.push(href)}
+                    />
                   )}
                 </View>
-              )}
+              ),
+            )}
 
-              {messages.map((message, index) =>
-                message.role === 'user' ? (
-                  <View key={message.id} style={[styles.bubble, styles.userBubble]}>
-                    <Text style={styles.userText}>{message.text}</Text>
-                  </View>
-                ) : (
-                  <View key={message.id} style={styles.coachTurn}>
-                    <View style={[styles.bubble, styles.coachBubble]}>
-                      <Text style={styles.coachText}>{message.text}</Text>
-                    </View>
-                    {message.invest && <InvestBento advice={message.invest} />}
-                    {/* Only the latest answer offers follow-ups; they vanish once a new question is sent. */}
-                    {index === messages.length - 1 && !pending && (
-                      <ChatSuggestions
-                        suggestions={message.suggestions ?? []}
-                        shortcut={message.shortcut}
-                        onPick={send}
-                        onShortcut={(href) => router.push(href)}
-                      />
-                    )}
-                  </View>
-                ),
-              )}
-
-              {pending && (
-                <View style={[styles.bubble, styles.coachBubble]}>
-                  <ActivityIndicator size="small" color={bankGreen} />
-                </View>
-              )}
-
-              {error ? (
-                <View style={[styles.bubble, styles.coachBubble]}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-
-            <View style={styles.dock}>
-              <View style={styles.inputRow}>
-                <TextInput
-                  ref={inputRef}
-                  value={draft}
-                  onChangeText={setDraft}
-                  placeholder={ready ? 'Ask about your money…' : 'Loading your data…'}
-                  placeholderTextColor={inkMuted}
-                  editable={ready}
-                  multiline
-                  maxLength={1000}
-                  style={styles.input}
-                  accessibilityLabel="Message to your finance coach"
-                />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Send message"
-                  disabled={!canSend}
-                  onPress={() => send(draft)}
-                  style={({ pressed }) => [styles.sendButton, (!canSend || pressed) && styles.dimmed]}>
-                  <SymbolView
-                    name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
-                    tintColor="#ffffff"
-                    size={20}
-                  />
-                </Pressable>
+            {pending && (
+              <View style={[styles.bubble, styles.coachBubble]}>
+                <ActivityIndicator size="small" color={bankGreen} />
               </View>
+            )}
+
+            {error ? (
+              <View style={[styles.bubble, styles.coachBubble]}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          <View style={styles.dock}>
+            <View style={styles.inputRow}>
+              <TextInput
+                ref={inputRef}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={ready ? 'Ask about your money…' : 'Loading your data…'}
+                placeholderTextColor={inkMuted}
+                editable={ready}
+                multiline
+                maxLength={1000}
+                style={styles.input}
+                accessibilityLabel="Message to your finance coach"
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                disabled={!canSend}
+                onPress={() => send(draft)}
+                style={({ pressed }) => [styles.sendButton, (!canSend || pressed) && styles.dimmed]}>
+                <SymbolView
+                  name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
+                  tintColor="#ffffff"
+                  size={20}
+                />
+              </Pressable>
             </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Animated.View>
-    </View>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
   flex: {
     flex: 1,
-  },
-  wipe: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    backgroundColor: lightGreen,
   },
   header: {
     flexDirection: 'row',
@@ -301,19 +244,6 @@ const styles = StyleSheet.create({
     color: ink,
     fontSize: 20,
     fontWeight: '700',
-  },
-  closeButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-  },
-  closeGlyph: {
-    color: ink,
-    fontSize: 26,
-    lineHeight: 28,
   },
   scrollContent: {
     flexGrow: 1,

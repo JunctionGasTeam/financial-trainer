@@ -1,8 +1,9 @@
 import { SymbolView } from 'expo-symbols';
 import { router, type Href } from 'expo-router';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SafeToSpendCard } from '@/components/safe-to-spend-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset } from '@/constants/theme';
@@ -19,7 +20,9 @@ export function FinanceReportEntry() {
   return (
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.content}>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+          <SafeToSpendCard />
+
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.eyebrow}>
             YOUR FINANCES
           </ThemedText>
@@ -139,7 +142,7 @@ export function FinanceReportEntry() {
               size={20}
             />
           </Pressable> */}
-        </View>
+        </ScrollView>
 
         <View style={[styles.launcherDock, { paddingBottom: 10 + launcherBottom }]}>
           <Pressable
@@ -176,10 +179,13 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  content: {
+  scroll: {
     flex: 1,
+  },
+  content: {
     paddingHorizontal: 20,
     paddingTop: 28,
+    paddingBottom: 16,
     gap: 14,
   },
   eyebrow: {

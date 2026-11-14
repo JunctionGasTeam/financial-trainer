@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,11 +8,22 @@ import { ThemedView } from '@/components/themed-view';
 import { getRecentTransactionData } from '@/data/transactions';
 import { analyzeWithGemini, formatAnomalyMonth, type AgentResult } from '@/features/anomaly/api';
 import { useTheme } from '@/hooks/use-theme';
+import { CloseButton, closeButtonSize } from '@/components/ui/close-button';
+import { useWipe, WipeScreen } from '@/components/ui/wipe-screen';
 
 const green = '#008044';
 const analysts = ['Spending trend', 'Category shifts', 'Cash flow'];
 
 export default function AnomalyDetectionScreen() {
+  return (
+    <WipeScreen from="right">
+      <AnomalyDetection />
+    </WipeScreen>
+  );
+}
+
+function AnomalyDetection() {
+  const { close } = useWipe();
   const db = useSQLiteContext();
   const theme = useTheme();
   const [results, setResults] = useState<AgentResult[] | null>(null);
@@ -44,14 +54,7 @@ export default function AnomalyDetectionScreen() {
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close anomaly detection"
-            hitSlop={12}
-            onPress={() => router.back()}
-            style={[styles.closeButton, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.closeGlyph, { color: theme.text }]}>×</Text>
-          </Pressable>
+          <CloseButton accessibilityLabel="Close anomaly detection" onPress={close} />
           <ThemedText type="smallBold">Anomaly detection</ThemedText>
           <View style={styles.headerBalance} />
         </View>
@@ -132,9 +135,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
   header: { height: 72, paddingTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  closeButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  closeGlyph: { fontSize: 29, lineHeight: 32, fontWeight: '300' },
-  headerBalance: { width: 48 },
+  headerBalance: { width: closeButtonSize },
   content: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 32, gap: 14 },
   eyebrow: { letterSpacing: 1 },
   title: { marginTop: -8 },

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { router } from 'expo-router';
 import { SQLiteProvider, useSQLiteContext, type SQLiteDatabase } from 'expo-sqlite';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -10,10 +9,20 @@ import { getMortgagePredictionContext, type MortgageApplicant } from '@/data/mor
 import { getRecentSalaryIncomeEstimate } from '@/data/transactions';
 import { predictMortgageApproval, type MortgagePrediction } from '@/features/mortgage/api';
 import { useTheme } from '@/hooks/use-theme';
+import { CloseButton, closeButtonSize } from '@/components/ui/close-button';
+import { useWipe, WipeScreen } from '@/components/ui/wipe-screen';
 
 const green = '#008044';
 
 export default function MortgagePredictionScreen() {
+  return (
+    <WipeScreen>
+      <MortgageDatabases />
+    </WipeScreen>
+  );
+}
+
+function MortgageDatabases() {
   const customerDb = useSQLiteContext();
   return (
     <SQLiteProvider
@@ -37,6 +46,7 @@ function MortgageHistoryProvider({ customerDb }: { customerDb: SQLiteDatabase })
 
 function MortgageEstimator({ customerDb, decisionsDb }: { customerDb: SQLiteDatabase; decisionsDb: SQLiteDatabase }) {
   const historyDb = useSQLiteContext();
+  const { close } = useWipe();
   const theme = useTheme();
   const [propertyPrice, setPropertyPrice] = useState('');
   const [equityAmount, setEquityAmount] = useState('');
@@ -108,14 +118,7 @@ function MortgageEstimator({ customerDb, decisionsDb }: { customerDb: SQLiteData
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close mortgage estimate"
-            hitSlop={12}
-            onPress={() => router.back()}
-            style={[styles.closeButton, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.closeGlyph, { color: theme.text }]}>×</Text>
-          </Pressable>
+          <CloseButton accessibilityLabel="Close mortgage estimate" onPress={close} />
           <ThemedText type="smallBold">Mortgage estimate</ThemedText>
           <View style={styles.headerBalance} />
         </View>
@@ -266,9 +269,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
   header: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  closeGlyph: { fontSize: 29, lineHeight: 32, fontWeight: '300' },
-  headerBalance: { width: 38 },
+  headerBalance: { width: closeButtonSize },
   content: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 32, gap: 14 },
   eyebrow: { letterSpacing: 1 },
   title: { marginTop: -8 },

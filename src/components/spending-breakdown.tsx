@@ -29,6 +29,7 @@ import {
 } from '@/data/transactions';
 import { classifySpendingTransactions, type SpendingType } from '@/features/spending/api';
 import { useTheme } from '@/hooks/use-theme';
+import { CloseButton, closeButtonSize } from '@/components/ui/close-button';
 
 const bankGreen = '#008044';
 const emptySummary: MonthlyTransactionSummary = {
@@ -131,14 +132,7 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
         <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close spending and income overview"
-            hitSlop={12}
-            onPress={onClose}
-            style={({ pressed }) => [styles.closeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
-            <Text style={[styles.closeGlyph, { color: theme.text }]}>×</Text>
-          </Pressable>
+          <CloseButton accessibilityLabel="Close spending and income overview" onPress={onClose} />
           <ThemedText type="smallBold" style={styles.headerTitle}>
             Spending and income
           </ThemedText>
@@ -487,24 +481,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 18,
   },
-  closeButton: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 19,
-  },
-  closeGlyph: {
-    fontSize: 29,
-    lineHeight: 33,
-    fontWeight: '300',
-  },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
   },
   headerBalance: {
-    width: 48,
+    width: closeButtonSize,
   },
   segmentedControl: {
     flexDirection: 'row',

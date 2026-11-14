@@ -2,29 +2,27 @@ import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { UnrollReveal } from '@/components/unroll-reveal';
+import { Bento } from '@/constants/bento';
 import type { InvestAdvice, InvestAllocation, InvestAsset } from '@/features/chat/api';
 
-const ink = '#10201B';
-const inkMuted = '#4f615b';
-const tileRadius = 24;
-const gridGap = 8;
+const { ink, inkMuted, tileRadius, gridGap } = Bento;
 // Fixed heights keep the bento shape without flex-stretching inside the reveal clip.
 const smallTileHeight = 150;
 
 const assetStyles: Record<InvestAsset, { label: string; color: string; icon: SymbolViewProps['name'] }> = {
   stocks: {
     label: 'Stocks',
-    color: '#d6f24a',
+    color: Bento.lime,
     icon: { ios: 'chart.line.uptrend.xyaxis', android: 'trending_up', web: 'trending_up' },
   },
   bonds: {
     label: 'Bonds',
-    color: '#b9a6f5',
+    color: Bento.purple,
     icon: { ios: 'building.columns', android: 'account_balance', web: 'account_balance' },
   },
   gold: {
     label: 'Gold',
-    color: '#f7d98b',
+    color: Bento.gold,
     icon: { ios: 'medal', android: 'workspace_premium', web: 'workspace_premium' },
   },
 };
@@ -128,7 +126,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    backgroundColor: Bento.iconBadge,
   },
   tileBottom: {
     alignItems: 'flex-start',
