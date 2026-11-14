@@ -63,7 +63,7 @@ The primary audience is young adults, which the brief names as the group where f
 - Login and user accounts. A customer is chosen from a list.
 - Real S-Bank systems. Data comes from the provided CSV files.
 - Predicting mortgage approval. The data does not support it (section 6.10).
-- Product recommendations and investment advice (story T3).
+- Specific product recommendations (named funds, lenders). Only a fixed demo allocation is shown (story T3).
 - Payments, transfers or any action that moves money.
 - Push notifications, voice input, app store publishing.
 - iOS builds. The laptop runs Linux, so iOS cannot be built or simulated there. Expo keeps an iOS build possible later.
@@ -162,7 +162,7 @@ Figures in the criteria are test fixtures for the as-of date 2026-09-30.
 
 **T2. Clear limits.** For questions outside the data or the form, the coach answers "I can't answer that from your transactions" and suggests up to three questions it can answer. It never guesses.
 
-**T3. Coaching, not advice.** The coach does not recommend financial products, investments or lenders. Asked "Should I buy this fund?", it explains the concept and suggests speaking with the bank.
+**T3. Coaching, not advice.** The coach does not recommend specific financial products, funds or lenders. Asked "Should I buy this fund?", it explains the concept and suggests speaking with the bank. When the user asks about investing spare money, the coach sizes a monthly amount from their typical surplus and shows it as a fixed demo allocation (60% stocks, 20% bonds, 20% gold) in bento tiles with an Invest button, always labelled "Demo, not financial advice". The Invest button does not move money.
 
 **T4. Honest about the data.** Merchants have no names, so "coffee" cannot be isolated. The coach answers at the nearest level (fast food, restaurants) and says which level it used. Only this one account is visible, and the coach says so wherever it matters (savings, equity).
 

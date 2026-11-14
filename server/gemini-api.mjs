@@ -369,13 +369,62 @@ async function runChat(messages, monthlyData, window) {
     'You are a friendly personal finance coach inside a banking app, talking with the account owner about their own money.',
     'Answer only from the supplied monthly EUR totals grouped by month and category. Never invent transactions, merchants, or numbers. If the data cannot answer the question, say so briefly.',
     `The data covers ${window.startMonth} through ${window.endMonth}. Months with no data: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
-    'Reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    'Write the reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    'Then propose exactly 3 follow-up questions the user could tap next, in this order: (1) dig deeper into what the reply just mentioned, (2) compare it with another month, the average, or income, (3) a practical next step such as cutting a category or saving. Write each as the user would ask it, in first person, at most 6 words and 40 characters. Only mention categories and months present in the data, never invent numbers, and do not repeat questions already asked.',
+    'Also pick a shortcut to a related app screen: "spending" if the reply is about where money went or category breakdowns, "anomaly" if it is about unusual or sudden changes, "savings" if it is about saving or goals, otherwise "none".',
+    'If the user asks about investing, where to put spare money, or growing their savings, set invest to {"monthlyAmount":N}: a realistic whole-EUR monthly amount to invest, based on the typical monthly income minus spending in the data. The app splits it 60% stocks, 20% bonds, 20% gold and shows it as visual tiles, so keep the reply to at most 2 short sentences and do not name specific funds. If there is no positive surplus, set invest to null and explain briefly. For any other question, set invest to null.',
+    'Return valid JSON only in this shape: {"reply":"plain text answer","suggestions":["dig deeper","compare","next step"],"shortcut":"spending|anomaly|savings|none","invest":{"monthlyAmount":150} or null}.',
     `Monthly data:\n${JSON.stringify(monthlyData)}`,
-    `Conversation so far:\n${transcript}\n\nCoach:`,
+    `Conversation so far:\n${transcript}`,
   ].join('\n\n');
 
-  const text = await callHydrogen(prompt, { label: 'Chat coach', maxOutputTokens: 2048 });
-  return text.replace(/^Coach:\s*/i, '').slice(0, 2000);
+  const text = await callHydrogen(prompt, { json: true, label: 'Chat coach', maxOutputTokens: 2048 });
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+  // If the model ignored the JSON format, still show its answer; the app falls back to static chips.
+  const reply = typeof parsed?.reply === 'string' && parsed.reply.trim()
+    ? parsed.reply.trim()
+    : parsed ? '' : text.replace(/^Coach:\s*/i, '').trim();
+  if (!reply) throw new Error('The coach returned an unexpected response. Try again.');
+
+  const asked = new Set(messages.filter((m) => m.role === 'user').map((m) => m.text.trim().toLowerCase()));
+  const suggestions = [];
+  for (const item of Array.isArray(parsed?.suggestions) ? parsed.suggestions : []) {
+    if (typeof item !== 'string') continue;
+    const clean = item.trim().slice(0, 60);
+    const key = clean.toLowerCase();
+    if (!clean || asked.has(key) || suggestions.some((s) => s.toLowerCase() === key)) continue;
+    suggestions.push(clean);
+    if (suggestions.length === 3) break;
+  }
+  const shortcut = chatShortcuts.has(parsed?.shortcut) ? parsed.shortcut : 'none';
+  return { reply: reply.slice(0, 2000), suggestions, shortcut, invest: buildInvestAdvice(parsed?.invest) };
+}
+
+const chatShortcuts = new Set(['spending', 'anomaly', 'savings', 'none']);
+
+// Fixed demo allocation; the model only sizes the monthly total.
+const investSplit = [
+  { asset: 'stocks', share: 60 },
+  { asset: 'bonds', share: 20 },
+  { asset: 'gold', share: 20 },
+];
+
+function buildInvestAdvice(invest) {
+  const amount = invest?.monthlyAmount;
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000) return null;
+  const total = Math.round(amount);
+  let remaining = total;
+  const allocations = investSplit.map(({ asset, share }, index) => {
+    const part = index === investSplit.length - 1 ? remaining : Math.round((total * share) / 100);
+    remaining -= part;
+    return { asset, share, amount: part };
+  });
+  return { total, allocations };
 }
 
 function validateWindow(window, monthlyData) {
@@ -426,8 +475,8 @@ const server = createServer(async (request, response) => {
       if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
       if (!validateWindow(window, monthlyData)) return send(response, 400, { error: 'The 12-month data window is missing or invalid.' });
       if (!validateChatMessages(requestData.messages)) return send(response, 400, { error: 'The chat messages are missing or invalid.' });
-      const reply = await runChat(requestData.messages, monthlyData, window);
-      return send(response, 200, { reply, model });
+      const chat = await runChat(requestData.messages, monthlyData, window);
+      return send(response, 200, { ...chat, model });
     }
 
     if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });

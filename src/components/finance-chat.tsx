@@ -20,7 +20,9 @@ import Animated, { Easing, interpolate, useAnimatedStyle, useSharedValue, withTi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { sendChatMessage, type ChatMessage } from '@/features/chat/api';
+import { ChatSuggestions } from '@/components/chat-suggestions';
+import { InvestBento } from '@/components/invest-bento';
+import { fallbackSuggestions, sendChatMessage, type ChatMessage } from '@/features/chat/api';
 import { useRecentFinanceData } from '@/hooks/use-recent-finance-data';
 
 const lightGreen = '#e2f3e8';
@@ -34,6 +36,7 @@ const suggestions = [
   'Where did my money go last month?',
   'How did my income change?',
   'Am I spending more than I earn?',
+  'Where should I invest spare money?',
 ];
 
 let nextId = 0;
@@ -119,8 +122,18 @@ export function FinanceChatScreen() {
     setError('');
     setPending(true);
     try {
-      const reply = await sendChatMessage(history, data.monthlyData, data.window);
-      setMessages((current) => [...current, { id: makeId(), role: 'assistant', text: reply }]);
+      const { reply, suggestions: followUps, shortcut, invest } = await sendChatMessage(history, data.monthlyData, data.window);
+      setMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: 'assistant',
+          text: reply,
+          suggestions: followUps.length ? followUps : fallbackSuggestions(history),
+          shortcut,
+          invest: invest ?? undefined,
+        },
+      ]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The coach could not answer. Try again.');
     } finally {
@@ -170,29 +183,32 @@ export function FinanceChatScreen() {
                     I answer from your last 12 months of transactions.
                   </Text>
                   {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
-                  <View style={styles.chips}>
-                    {suggestions.map((suggestion) => (
-                      <Pressable
-                        key={suggestion}
-                        accessibilityRole="button"
-                        disabled={!ready || pending}
-                        onPress={() => send(suggestion)}
-                        style={({ pressed }) => [styles.chip, (!ready || pressed) && styles.dimmed]}>
-                        <Text style={styles.chipText}>{suggestion}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
+                  {opened && (
+                    <ChatSuggestions suggestions={suggestions} disabled={!ready || pending} onPick={send} />
+                  )}
                 </View>
               )}
 
-              {messages.map((message) =>
+              {messages.map((message, index) =>
                 message.role === 'user' ? (
                   <View key={message.id} style={[styles.bubble, styles.userBubble]}>
                     <Text style={styles.userText}>{message.text}</Text>
                   </View>
                 ) : (
-                  <View key={message.id} style={[styles.bubble, styles.coachBubble]}>
-                    <Text style={styles.coachText}>{message.text}</Text>
+                  <View key={message.id} style={styles.coachTurn}>
+                    <View style={[styles.bubble, styles.coachBubble]}>
+                      <Text style={styles.coachText}>{message.text}</Text>
+                    </View>
+                    {message.invest && <InvestBento advice={message.invest} />}
+                    {/* Only the latest answer offers follow-ups; they vanish once a new question is sent. */}
+                    {index === messages.length - 1 && !pending && (
+                      <ChatSuggestions
+                        suggestions={message.suggestions ?? []}
+                        shortcut={message.shortcut}
+                        onPick={send}
+                        onShortcut={(href) => router.push(href)}
+                      />
+                    )}
                   </View>
                 ),
               )}
@@ -322,20 +338,8 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginBottom: 8,
   },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    borderRadius: 999,
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  chipText: {
-    color: ink,
-    fontSize: 14,
+  coachTurn: {
+    gap: 10,
   },
   bubble: {
     maxWidth: '85%',
