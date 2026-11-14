@@ -34,7 +34,8 @@ function send(response, status, body) {
 function checkRateLimit(ip) {
   const now = Date.now();
   const recent = (rateLimits.get(ip) ?? []).filter((time) => now - time < 60_000);
-  if (recent.length >= 8) return false;
+  // A chat question can take two requests (lookup, then answer).
+  if (recent.length >= 16) return false;
   recent.push(now);
   rateLimits.set(ip, recent);
   return true;
@@ -416,38 +417,122 @@ function validateChatMessages(messages) {
   return valid && messages[messages.length - 1].role === 'user';
 }
 
-async function runChat(messages, monthlyData, window) {
+// The query form the model fills in when monthly totals cannot answer a question exactly
+// (docs/SPEC.md 7.2). The app validates and runs it on the device; see src/features/query/.
+const queryFormGuide = [
+  'Query form (JSON). Every field is optional; omitted fields take the default shown first:',
+  '{"measure":"spend|income|net|largest",',
+  ' "filters":{"basket":["regular"|"irregular"|"everyday"],"category":["Housing","Utilities","Groceries","Transportation","Health","Home & Tech","Restaurants","Entertainment","Lifestyle","Travel","Salary","Other Income","Invest Deposit"],"merchant_type":["taxi",...],"min_amount":null,"max_amount":null},',
+  ' "period":"last_month|this_week|last_week|this_month|last_3_months|last_6_months|last_12_months|this_year|last_year|all_time|custom",',
+  ' "from":"YYYY-MM-DD (custom only)","to":"YYYY-MM-DD (custom only)",',
+  ' "group_by":"none|basket|category|merchant_type|month|weekday",',
+  ' "compare_to":"none|previous_period|same_period_last_year|my_usual",',
+  ' "what_if":{"cut_percent":20} or null,',
+  ' "limit":5}',
+  'merchant_type keys: public_transport, taxi, fuel_station, fuel_pump, parking, supermarket, butcher, dairy, convenience, restaurant, bar, fast_food, cinema, tickets, attraction, amusement_park, recreation, pharmacy, doctor, dentist, medical_other, home_supply, hardware, furniture, electronics, software, clothing_family, clothing, sports, books, hobby_toys, retail_other, airline, travel_agency, hotel, car_rental.',
+  'Baskets: regular = regular essentials (rent, bills, groceries); irregular = unexpected necessities (health, repairs, large one-offs); everyday = everyday spending that slips through your fingers (dining, coffee, taxis, fun).',
+  'Notes: "spend" never includes money moved to investments. "largest" lists the biggest purchases (use limit). "net" is money in minus money out. what_if cuts the monthly average over the period, so use a period of 3 to 12 months for it (default to last_6_months). "Dining out" means category Restaurants.',
+].join('\n');
+
+function chatPrompt(messages, monthlyData, window, asOf, queryResults) {
   const transcript = messages
     .map((message) => `${message.role === 'user' ? 'User' : 'Coach'}: ${message.text.trim()}`)
     .join('\n');
-  const prompt = [
+  const lookupStep = queryResults
+    ? [
+      'The app has run your lookups on the user\'s transactions. The results below are exact. For figures about the user\'s money, use only numbers that appear in these results or in the monthly data, copied as they are. Do not add, subtract, average or estimate numbers yourself; if a figure you would need is not there, leave it out. If a lookup returned an error, say briefly what you could not look up. Do not return queries.',
+      `Lookup results:\n${JSON.stringify(queryResults)}`,
+    ]
+    : [
+      'LOOKUPS. The monthly data only has whole categories per month. When answering needs anything it cannot give exactly, such as a merchant type (taxi, bar, fast food, supermarket, pharmacy...), single or largest purchases, a week, weekdays, a basket, a date range, a comparison between periods, a sum or average over several months, or a what-if cut, do not answer yet. Return only {"queries":[...]} with 1 to 3 query forms, and the app will send you exact results. Do not guess figures you could look up.',
+      queryFormGuide,
+    ];
+  return [
     'You are a friendly personal finance coach inside a banking app, talking with the account owner about their own money.',
-    'For questions about the user\'s own money, answer only from the supplied monthly EUR totals grouped by month and category. Never invent transactions, merchants, or numbers. If the data cannot answer such a question, say so briefly.',
+    'For questions about the user\'s own money, answer only from the supplied data. Never invent transactions, merchants, or numbers. If the data cannot answer such a question, say so briefly.',
     'If the user asks what a financial term means (for example ETF, bond, APR, compound interest, emergency fund, a spending category, or a word you used earlier in the conversation), explain it in plain, jargon-free language in 1-2 short sentences. Where it fits naturally, add one sentence linking it to their own data, using only numbers from that data. Do not recommend specific products. For such a definition, make the first follow-up question about a related term or an example.',
-    `The data covers ${window.startMonth} through ${window.endMonth}. Months with no data: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
-    'Write the reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    `Today is ${asOf || window.endMonth}, the last date in the data. The data covers ${window.startMonth} through ${window.endMonth}. Months with no data: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
+    'Write the reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.56.',
     'Then propose exactly 3 follow-up questions the user could tap next, in this order: (1) dig deeper into what the reply just mentioned, (2) compare it with another month, the average, or income, (3) a practical next step such as cutting a category or saving. Write each as the user would ask it, in first person, at most 6 words and 40 characters. Only mention categories and months present in the data, never invent numbers, and do not repeat questions already asked.',
     'Also pick a shortcut to a related app screen: "spending" if the reply is about where money went or category breakdowns, "anomaly" if it is about unusual or sudden changes, "savings" if it is about saving or goals, otherwise "none".',
     'If the user asks about investing, where to put spare money, or growing their savings, set invest to {"monthlyAmount":N}: a realistic whole-EUR monthly amount to invest, based on the typical monthly income minus spending in the data. The app splits it 60% stocks, 20% bonds, 20% gold and shows it as visual tiles, so keep the reply to at most 2 short sentences and do not name specific funds. For investing replies, make one follow-up question ask what one of these asset types means (e.g. "What is a bond?"). If there is no positive surplus, set invest to null and explain briefly. For any other question, set invest to null.',
+    ...lookupStep,
     'Return valid JSON only in this shape: {"reply":"plain text answer","suggestions":["dig deeper","compare","next step"],"shortcut":"spending|anomaly|savings|none","invest":{"monthlyAmount":150} or null}.',
     `Monthly data:\n${JSON.stringify(monthlyData)}`,
     `Conversation so far:\n${transcript}`,
   ].join('\n\n');
+}
 
-  const text = await callHydrogen(prompt, { json: true, label: 'Chat coach', maxOutputTokens: 2048 });
-  let parsed;
+function parseJson(text) {
   try {
-    parsed = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
-    parsed = null;
+    return null;
   }
+}
+
+/** Every number in the data the model was given, for checking the amounts it writes. */
+function collectNumbers(value, into = []) {
+  if (typeof value === 'number' && Number.isFinite(value)) into.push(Math.abs(value));
+  else if (Array.isArray(value)) value.forEach((item) => collectNumbers(item, into));
+  else if (value && typeof value === 'object') Object.values(value).forEach((item) => collectNumbers(item, into));
+  return into;
+}
+
+/** Euro amounts in the reply that match no supplied figure (after rounding to the precision written). */
+function unmatchedAmounts(reply, allowed) {
+  const number = String.raw`(\d{1,3}(?:[,\s  ]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)`;
+  const pattern = new RegExp(String.raw`(?:€|EUR)\s?${number}|${number}\s?(?:€|EUR\b|euros?\b)`, 'g');
+  const bad = [];
+  for (const match of reply.matchAll(pattern)) {
+    const written = (match[1] ?? match[2]).trim().replace(/[,\s  ]/g, '');
+    const amount = Number(written);
+    if (!Number.isFinite(amount)) continue;
+    const decimals = written.includes('.') ? written.split('.')[1].length : 0;
+    const tolerance = decimals >= 2 ? 0.006 : decimals === 1 ? 0.051 : 0.51;
+    if (!allowed.some((value) => Math.abs(value - amount) <= tolerance)) bad.push(match[0].trim());
+  }
+  return bad;
+}
+
+async function runChat(messages, monthlyData, window, asOf, queryResults) {
+  const asked = new Set(messages.filter((m) => m.role === 'user').map((m) => m.text.trim().toLowerCase()));
+  let prompt = chatPrompt(messages, monthlyData, window, asOf, queryResults);
+  let text = await callHydrogen(prompt, { json: true, label: 'Chat coach', maxOutputTokens: 2048 });
+  let parsed = parseJson(text);
+
+  // First round: the model may ask the app to look things up instead of answering.
+  if (!queryResults && Array.isArray(parsed?.queries) && parsed.queries.length > 0) {
+    const queries = parsed.queries.filter((item) => item && typeof item === 'object' && !Array.isArray(item)).slice(0, 3);
+    if (queries.length > 0) return { queries };
+  }
+
+  // After a lookup, every amount must come from the computed results (SPEC 7.3). Retry once, then use the templates.
+  let verified = null;
+  if (queryResults) {
+    const allowed = collectNumbers([queryResults, monthlyData]);
+    let bad = unmatchedAmounts(String(parsed?.reply ?? ''), allowed);
+    if (bad.length > 0) {
+      console.warn('Chat coach wrote amounts not in the lookup results; retrying.', bad);
+      prompt += `\n\nYour previous reply stated ${bad.join(', ')}, which is not in the lookup results. Write the reply again using only figures that appear in the results.`;
+      text = await callHydrogen(prompt, { json: true, label: 'Chat coach (retry)', maxOutputTokens: 2048 });
+      parsed = parseJson(text) ?? parsed;
+      bad = unmatchedAmounts(String(parsed?.reply ?? ''), allowed);
+    }
+    verified = bad.length === 0;
+    if (!verified) {
+      console.warn('Chat coach still wrote unsupported amounts; answering from templates.', bad);
+      const summaries = queryResults.map((item) => item.result?.summary).filter(Boolean).join(' ');
+      parsed = { ...parsed, reply: summaries || 'I could not look that up in your transactions.' };
+    }
+  }
+
   // If the model ignored the JSON format, still show its answer; the app falls back to static chips.
   const reply = typeof parsed?.reply === 'string' && parsed.reply.trim()
     ? parsed.reply.trim()
     : parsed ? '' : text.replace(/^Coach:\s*/i, '').trim();
   if (!reply) throw new Error('The coach returned an unexpected response. Try again.');
 
-  const asked = new Set(messages.filter((m) => m.role === 'user').map((m) => m.text.trim().toLowerCase()));
   const suggestions = [];
   for (const item of Array.isArray(parsed?.suggestions) ? parsed.suggestions : []) {
     if (typeof item !== 'string') continue;
@@ -458,7 +543,16 @@ async function runChat(messages, monthlyData, window) {
     if (suggestions.length === 3) break;
   }
   const shortcut = chatShortcuts.has(parsed?.shortcut) ? parsed.shortcut : 'none';
-  return { reply: reply.slice(0, 2000), suggestions, shortcut, invest: buildInvestAdvice(parsed?.invest) };
+  return { reply: reply.slice(0, 2000), suggestions, shortcut, invest: buildInvestAdvice(parsed?.invest), verified };
+}
+
+function validateQueryResults(value) {
+  if (value == null) return true;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) return false;
+  if (JSON.stringify(value).length > 60_000) return false;
+  return value.every((item) => item && typeof item === 'object' && item.form && typeof item.form === 'object' &&
+    ((item.result && typeof item.result === 'object' && typeof item.result.summary === 'string') ||
+      (typeof item.error === 'string' && item.error.length <= 300)));
 }
 
 const chatShortcuts = new Set(['spending', 'anomaly', 'savings', 'none']);
@@ -536,7 +630,9 @@ const server = createServer(async (request, response) => {
       if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
       if (!validateWindow(window, monthlyData)) return send(response, 400, { error: 'The 12-month data window is missing or invalid.' });
       if (!validateChatMessages(requestData.messages)) return send(response, 400, { error: 'The chat messages are missing or invalid.' });
-      const chat = await runChat(requestData.messages, monthlyData, window);
+      if (!validateQueryResults(requestData.queryResults)) return send(response, 400, { error: 'The lookup results are invalid.' });
+      const asOf = typeof requestData.asOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(requestData.asOf) ? requestData.asOf : null;
+      const chat = await runChat(requestData.messages, monthlyData, window, asOf, requestData.queryResults ?? null);
       return send(response, 200, { ...chat, model });
     }
 

@@ -1,5 +1,6 @@
 import { apiUrl } from '@/features/api-url';
 import type { AnalysisWindow, MonthlyTransactionSummary } from '@/data/transactions';
+import type { QueryResult } from '@/features/query/run';
 
 export type ChatShortcut = 'spending' | 'anomaly' | 'savings' | 'none';
 
@@ -10,6 +11,8 @@ export type ChatMessage = {
   suggestions?: string[];
   shortcut?: ChatShortcut;
   invest?: InvestAdvice;
+  /** Figures the app computed for this answer, so the user can see what it is based on. */
+  lookups?: QueryResult[];
 };
 
 export type InvestAsset = 'stocks' | 'bonds' | 'gold';
@@ -23,6 +26,18 @@ export type ChatReply = {
   suggestions: string[];
   shortcut: ChatShortcut;
   invest: InvestAdvice | null;
+  lookups: QueryResult[];
+};
+
+/** One query form the model asked for, with what the app computed (or why it could not). */
+export type LookupOutcome = { form: unknown; result?: QueryResult; error?: string };
+
+export type LookupRunner = (forms: unknown[]) => Promise<LookupOutcome[]>;
+
+export type ChatData = {
+  monthlyData: Record<string, MonthlyTransactionSummary>;
+  window: AnalysisWindow;
+  asOf: string | null;
 };
 
 const investAssets: readonly InvestAsset[] = ['stocks', 'bonds', 'gold'];
@@ -58,23 +73,41 @@ export function fallbackSuggestions(messages: ChatMessage[]): string[] {
   });
 }
 
-export async function sendChatMessage(
-  messages: ChatMessage[],
-  monthlyData: Record<string, MonthlyTransactionSummary>,
-  window: AnalysisWindow,
-): Promise<ChatReply> {
+async function postChat(messages: ChatMessage[], data: ChatData, queryResults?: LookupOutcome[]) {
   const response = await fetch(`${apiUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messages: messages.slice(-20).map(({ role, text }) => ({ role, text })),
-      monthlyData,
-      window,
+      monthlyData: data.monthlyData,
+      window: data.window,
+      asOf: data.asOf,
+      queryResults,
     }),
   });
-
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `Chat server returned HTTP ${response.status}.`);
+  return result;
+}
+
+/**
+ * Asks the coach. When monthly totals are not enough, the model returns query forms instead of
+ * an answer; the app runs them on the device and asks again with the exact results.
+ */
+export async function sendChatMessage(
+  messages: ChatMessage[],
+  data: ChatData,
+  runLookups: LookupRunner,
+  onLookup?: () => void,
+): Promise<ChatReply> {
+  let result = await postChat(messages, data);
+  let outcomes: LookupOutcome[] = [];
+  if (Array.isArray(result.queries) && result.queries.length > 0) {
+    onLookup?.();
+    outcomes = await runLookups(result.queries.slice(0, 3));
+    result = await postChat(messages, data, outcomes);
+  }
+
   if (typeof result.reply !== 'string' || !result.reply.trim()) {
     throw new Error('The chat server returned an invalid response.');
   }
@@ -82,5 +115,11 @@ export async function sendChatMessage(
     ? result.suggestions.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3)
     : [];
   const shortcut: ChatShortcut = shortcuts.includes(result.shortcut) ? result.shortcut : 'none';
-  return { reply: result.reply.trim(), suggestions, shortcut, invest: parseInvest(result.invest) };
+  return {
+    reply: result.reply.trim(),
+    suggestions,
+    shortcut,
+    invest: parseInvest(result.invest),
+    lookups: outcomes.flatMap((outcome) => (outcome.result ? [outcome.result] : [])),
+  };
 }

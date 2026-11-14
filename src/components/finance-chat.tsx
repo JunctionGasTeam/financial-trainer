@@ -19,7 +19,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChatSuggestions } from '@/components/chat-suggestions';
 import { InvestBento } from '@/components/invest-bento';
 import { fallbackSuggestions, sendChatMessage, type ChatMessage } from '@/features/chat/api';
+import { useLookups } from '@/hooks/use-lookups';
 import { useRecentFinanceData } from '@/hooks/use-recent-finance-data';
+import { LookupNote } from '@/components/lookup-note';
 import { CloseButton } from '@/components/ui/close-button';
 import { useWipe, WipeScreen } from '@/components/ui/wipe-screen';
 
@@ -48,12 +50,14 @@ export function FinanceChatScreen() {
 
 function FinanceChat() {
   const { close, opened } = useWipe();
-  const { data, error: loadError } = useRecentFinanceData();
+  const { data, asOf, error: loadError } = useRecentFinanceData();
+  const runLookups = useLookups();
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
   const [error, setError] = useState('');
   const ready = Boolean(data && Object.keys(data.monthlyData).length);
   const canSend = ready && !pending && draft.trim().length > 0;
@@ -87,7 +91,12 @@ function FinanceChat() {
     setError('');
     setPending(true);
     try {
-      const { reply, suggestions: followUps, shortcut, invest } = await sendChatMessage(history, data.monthlyData, data.window);
+      const { reply, suggestions: followUps, shortcut, invest, lookups } = await sendChatMessage(
+        history,
+        { monthlyData: data.monthlyData, window: data.window, asOf },
+        runLookups,
+        () => setLookingUp(true),
+      );
       setMessages((current) => [
         ...current,
         {
@@ -97,12 +106,14 @@ function FinanceChat() {
           suggestions: followUps.length ? followUps : fallbackSuggestions(history),
           shortcut,
           invest: invest ?? undefined,
+          lookups: lookups.length ? lookups : undefined,
         },
       ]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The coach could not answer. Try again.');
     } finally {
       setPending(false);
+      setLookingUp(false);
     }
   }
 
@@ -154,6 +165,7 @@ function FinanceChat() {
                   <View style={[styles.bubble, styles.coachBubble]}>
                     <Text style={styles.coachText}>{message.text}</Text>
                   </View>
+                  {message.lookups && <LookupNote lookups={message.lookups} />}
                   {message.invest && <InvestBento advice={message.invest} />}
                   {/* Only the latest answer offers follow-ups; they vanish once a new question is sent. */}
                   {index === messages.length - 1 && !pending && (
@@ -169,8 +181,9 @@ function FinanceChat() {
             )}
 
             {pending && (
-              <View style={[styles.bubble, styles.coachBubble]}>
+              <View style={[styles.bubble, styles.coachBubble, styles.pendingBubble]}>
                 <ActivityIndicator size="small" color={bankGreen} />
+                {lookingUp && <Text style={styles.pendingText}>Looking at your transactions…</Text>}
               </View>
             )}
 
@@ -286,6 +299,15 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: '#ffffff',
     borderBottomLeftRadius: 6,
+  },
+  pendingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pendingText: {
+    color: inkMuted,
+    fontSize: 14,
   },
   userText: {
     color: '#ffffff',
