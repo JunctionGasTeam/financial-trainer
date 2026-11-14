@@ -18,6 +18,10 @@ export default function RootLayout() {
           name="spending-report"
           options={{ presentation: 'fullScreenModal', gestureEnabled: true }}
         />
+        <Stack.Screen
+          name="anomaly-detection"
+          options={{ presentation: 'fullScreenModal', gestureEnabled: true }}
+        />
       </Stack>
     </ThemeProvider>
   );
