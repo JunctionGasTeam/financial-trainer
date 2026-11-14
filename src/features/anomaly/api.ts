@@ -1,12 +1,10 @@
-import Constants from 'expo-constants';
+import { apiUrl } from '@/features/api-url';
 import type { AnalysisWindow, MonthlyTransactionSummary } from '@/data/transactions';
 
 export type Finding = {
   id: string;
   month: string;
-  title: string;
-  detail: string;
-  severity: 'low' | 'medium' | 'high';
+  bullet: string;
 };
 
 export type AgentResult = {
@@ -17,14 +15,9 @@ export type AgentResult = {
 
 export type GeminiAnalysis = {
   results: AgentResult[];
-  overallSummary: string;
   model: string;
   workflow: string;
 };
-
-const configuredApiUrl = process.env.EXPO_PUBLIC_GEMINI_API_URL?.trim();
-const expoDevHost = Constants.expoConfig?.hostUri?.split(':')[0];
-const apiUrl = (configuredApiUrl || (expoDevHost ? `http://${expoDevHost}:8787` : 'http://localhost:8787')).replace(/\/$/, '');
 
 export async function analyzeWithGemini(
   monthlyData: Record<string, MonthlyTransactionSummary>,
@@ -38,7 +31,7 @@ export async function analyzeWithGemini(
 
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `Analysis server returned HTTP ${response.status}.`);
-  if (!Array.isArray(result.results) || typeof result.overallSummary !== 'string') {
+  if (!Array.isArray(result.results)) {
     throw new Error('The analysis server returned an invalid response.');
   }
   return result as GeminiAnalysis;

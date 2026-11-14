@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { getRecentTransactionData, type AnalysisWindow } from '@/data/transactions';
+import { getRecentTransactionData } from '@/data/transactions';
 import { analyzeWithGemini, formatAnomalyMonth, type AgentResult } from '@/features/anomaly/api';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -17,40 +17,22 @@ export default function AnomalyDetectionScreen() {
   const db = useSQLiteContext();
   const theme = useTheme();
   const [results, setResults] = useState<AgentResult[] | null>(null);
-  const [orchestratorSummary, setOrchestratorSummary] = useState('');
-  const [analysisWindow, setAnalysisWindow] = useState<AnalysisWindow | null>(null);
-  const [loadingWindow, setLoadingWindow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    getRecentTransactionData(db).then(({ window }) => {
-      if (active) setAnalysisWindow(window);
-    }).catch(() => {
-      if (active) setError('Could not load customer transactions from SQLite.');
-    }).finally(() => {
-      if (active) setLoadingWindow(false);
-    });
-    return () => { active = false; };
-  }, [db]);
 
   async function analyze() {
     setBusy(true);
     setError('');
     try {
       const recentData = await getRecentTransactionData(db);
-      setAnalysisWindow(recentData.window);
       if (recentData.window.availableMonths.length === 0) {
         throw new Error('No customer transactions were found in the last 12 months.');
       }
       const analysis = await analyzeWithGemini(recentData.monthlyData, recentData.window);
       setResults(analysis.results);
-      setOrchestratorSummary(analysis.overallSummary);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Gemini analysis failed.');
       setResults(null);
-      setOrchestratorSummary('');
     } finally {
       setBusy(false);
     }
@@ -86,19 +68,10 @@ export default function AnomalyDetectionScreen() {
             <View style={styles.statusCopy}>
               <ThemedText type="smallBold">Gemini 4 Hydrogen · orchestrated</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                A coordinator plans the review, three analysts scan the data, then the coordinator summarizes their findings.
+                A coordinator assigns the review focus, then three analysts scan the data independently.
               </ThemedText>
             </View>
           </View>
-          {analysisWindow ? (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.periodNote}>
-              {formatAnomalyMonth(analysisWindow.startMonth)} – {formatAnomalyMonth(analysisWindow.endMonth)} · {analysisWindow.availableMonths.length} of 12 months have transaction data.
-              {analysisWindow.missingMonths.length > 0 ? ` Missing data: ${analysisWindow.missingMonths.map(formatAnomalyMonth).join(', ')}.` : ''}
-            </ThemedText>
-          ) : loadingWindow ? (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.periodNote}>Loading transaction months from SQLite…</ThemedText>
-          ) : null}
-
           <Pressable accessibilityRole="button" disabled={busy} onPress={analyze} style={[styles.primaryButton, busy && styles.disabled]}>
             {busy ? (
               <View style={styles.loadingRow}>
@@ -122,33 +95,18 @@ export default function AnomalyDetectionScreen() {
             {results ? <ThemedText type="small" themeColor="textSecondary">{findingsCount} {findingsCount === 1 ? 'pattern' : 'patterns'}</ThemedText> : null}
           </View>
 
-          {orchestratorSummary ? (
-            <View style={[styles.agentCard, { backgroundColor: theme.backgroundElement }]}>
-              <View style={styles.agentHeader}>
-                <ThemedText type="smallBold" style={styles.agentName}>Hydrogen orchestrator</ThemedText>
-                <View style={styles.agentPill}><ThemedText type="small" style={styles.agentPillText}>FINAL REVIEW</ThemedText></View>
-              </View>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.summary}>{orchestratorSummary}</ThemedText>
-            </View>
-          ) : null}
-
           {results ? results.map((result) => (
             <View key={result.agent} style={[styles.agentCard, { backgroundColor: theme.backgroundElement }]}>
               <View style={styles.agentHeader}>
                 <ThemedText type="smallBold" style={styles.agentName}>{result.agent}</ThemedText>
-                <View style={styles.agentPill}><ThemedText type="small" style={styles.agentPillText}>HYDROGEN AGENT</ThemedText></View>
               </View>
               <ThemedText type="small" themeColor="textSecondary" style={styles.summary}>{result.summary}</ThemedText>
               {result.findings.length === 0 ? (
                 <ThemedText type="small" style={styles.clearText}>No clear unusual monthly changes found.</ThemedText>
               ) : result.findings.map((finding) => (
                 <View key={finding.id} style={styles.finding}>
-                  <View style={[styles.findingMark, finding.severity === 'high' && styles.highSeverity]} />
-                  <View style={styles.findingCopy}>
-                    <ThemedText type="smallBold">{finding.title}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">{finding.detail}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">{formatAnomalyMonth(finding.month)}</ThemedText>
-                  </View>
+                  <ThemedText type="smallBold" style={styles.findingBullet}>•</ThemedText>
+                  <ThemedText type="small" style={styles.findingCopy}>{formatAnomalyMonth(finding.month)}: {finding.bullet}</ThemedText>
                 </View>
               ))}
             </View>
@@ -156,7 +114,6 @@ export default function AnomalyDetectionScreen() {
             <View key={analyst} style={[styles.agentCard, { backgroundColor: theme.backgroundElement }]}>
               <View style={styles.agentHeader}>
                 <ThemedText type="smallBold" style={styles.agentName}>{analyst}</ThemedText>
-                <View style={styles.agentPill}><ThemedText type="small" style={styles.agentPillText}>HYDROGEN AGENT</ThemedText></View>
               </View>
               <ThemedText type="small" themeColor="textSecondary">Ready to analyze your monthly data.</ThemedText>
             </View>
@@ -174,10 +131,10 @@ export default function AnomalyDetectionScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
-  header: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  header: { height: 72, paddingTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
+  closeButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   closeGlyph: { fontSize: 29, lineHeight: 32, fontWeight: '300' },
-  headerBalance: { width: 38 },
+  headerBalance: { width: 48 },
   content: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 32, gap: 14 },
   eyebrow: { letterSpacing: 1 },
   title: { marginTop: -8 },
@@ -186,7 +143,6 @@ const styles = StyleSheet.create({
   statusIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#e2f3e8', alignItems: 'center', justifyContent: 'center' },
   sparkle: { color: green, fontSize: 24 },
   statusCopy: { flex: 1, gap: 4 },
-  periodNote: { lineHeight: 19, paddingHorizontal: 2 },
   primaryButton: { minHeight: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: green, paddingHorizontal: 18 },
   primaryText: { color: '#fff' },
   loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
@@ -196,15 +152,12 @@ const styles = StyleSheet.create({
   errorText: { color: '#7c342d' },
   resultsHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
   agentCard: { borderRadius: 18, padding: 16, gap: 12 },
-  agentHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  agentHeader: { flexDirection: 'row', alignItems: 'center' },
   agentName: { color: green },
-  agentPill: { backgroundColor: '#e2f3e8', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
-  agentPillText: { color: green, letterSpacing: 0.5 },
   summary: { lineHeight: 20 },
   clearText: { paddingTop: 4 },
   finding: { flexDirection: 'row', gap: 10, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#d9e2dc' },
-  findingMark: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#d5a338', marginTop: 6 },
-  highSeverity: { backgroundColor: '#c33c36' },
-  findingCopy: { flex: 1, gap: 5 },
+  findingBullet: { color: green },
+  findingCopy: { flex: 1, lineHeight: 20 },
   disclaimer: { lineHeight: 18, marginTop: 3 },
 });
