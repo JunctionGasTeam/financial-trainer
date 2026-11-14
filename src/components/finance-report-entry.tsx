@@ -1,16 +1,20 @@
 import { SymbolView } from 'expo-symbols';
 import { router, type Href } from 'expo-router';
-import { Pressable, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { BottomTabInset } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const bankGreen = '#008044';
 
 export function FinanceReportEntry() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  // iOS native tabs overlay the screen; Android lays content out above the bar.
+  const launcherBottom = Platform.OS === 'ios' ? BottomTabInset + insets.bottom : 0;
 
   return (
     <ThemedView style={styles.screen}>
@@ -78,6 +82,30 @@ export function FinanceReportEntry() {
             />
           </Pressable>
         </View>
+
+        <View style={[styles.launcherDock, { paddingBottom: 10 + launcherBottom }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open chat with your finance coach"
+            onPress={() => router.push('/chat' as Href)}
+            style={({ pressed }) => [styles.launcher, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            <SymbolView
+              name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
+              tintColor={bankGreen}
+              size={20}
+            />
+            <ThemedText type="small" themeColor="textSecondary" style={styles.launcherText} numberOfLines={1}>
+              Ask your coach about your money…
+            </ThemedText>
+            <View style={styles.launcherSend}>
+              <SymbolView
+                name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
+                tintColor="#ffffff"
+                size={18}
+              />
+            </View>
+          </Pressable>
+        </View>
       </SafeAreaView>
     </ThemedView>
   );
@@ -91,6 +119,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    flex: 1,
     paddingHorizontal: 20,
     paddingTop: 28,
     gap: 14,
@@ -122,6 +151,31 @@ const styles = StyleSheet.create({
   },
   buttonTitle: {
     color: bankGreen,
+  },
+  launcherDock: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  launcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 24,
+    paddingLeft: 16,
+    paddingRight: 6,
+    paddingVertical: 6,
+    minHeight: 48,
+  },
+  launcherText: {
+    flex: 1,
+  },
+  launcherSend: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: bankGreen,
   },
   pressed: {
     opacity: 0.78,
