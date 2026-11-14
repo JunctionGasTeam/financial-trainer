@@ -58,36 +58,48 @@ function validateMonthlyData(data) {
 async function callHydrogen(prompt, {
   json = false,
   label = 'Hydrogen request',
-  maxOutputTokens = 4096,
+  maxOutputTokens = 8192,
   thinkingLevel = 'LOW',
 } = {}) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': process.env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        ...(json ? { responseMimeType: 'application/json' } : {}),
-        maxOutputTokens,
-        thinkingConfig: { thinkingLevel },
+  const outputBudgets = [maxOutputTokens, Math.max(maxOutputTokens * 2, 16384)];
+  for (let attempt = 0; attempt < outputBudgets.length; attempt += 1) {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': process.env.GEMINI_API_KEY,
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          ...(json ? { responseMimeType: 'application/json' } : {}),
+          maxOutputTokens: outputBudgets[attempt],
+          thinkingConfig: { thinkingLevel: 'LOW' },
+        },
+      }),
+    });
 
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = result?.error?.message || `Gemini returned HTTP ${response.status}`;
-    throw new Error(message);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = result?.error?.message || `Gemini returned HTTP ${response.status}`;
+      throw new Error(message);
+    }
+
+    const candidate = result?.candidates?.[0];
+    if (candidate?.finishReason === 'MAX_TOKENS' && attempt === 0) {
+      const usage = result?.usageMetadata;
+      console.warn(`${label} reached ${outputBudgets[attempt]} output tokens; retrying with ${outputBudgets[attempt + 1]} tokens.`, {
+        thoughtsTokenCount: usage?.thoughtsTokenCount,
+        candidatesTokenCount: usage?.candidatesTokenCount,
+      });
+      continue;
+    }
+    const text = candidate?.content?.parts?.map((part) => part.text ?? '').join('').trim();
+    if (candidate?.finishReason === 'MAX_TOKENS') throw new Error(`${label} exceeded its retry output limit (${outputBudgets[attempt]} tokens).`);
+    if (!text) throw new Error(`${label} returned an empty response.`);
+    return text;
   }
-
-  const candidate = result?.candidates?.[0];
-  const text = candidate?.content?.parts?.map((part) => part.text ?? '').join('').trim();
-  if (candidate?.finishReason === 'MAX_TOKENS') throw new Error(`${label} reached its output limit. Try again.`);
-  if (!text) throw new Error(`${label} returned an empty response.`);
-  return text;
+  throw new Error(`${label} exceeded its output limit after retrying.`);
 }
 
 async function runOrchestrator(monthlyData, window) {
@@ -95,11 +107,11 @@ async function runOrchestrator(monthlyData, window) {
     'You are the coordinator for a financial anomaly analysis using three specialized Gemini Hydrogen agents.',
     `Plan a concise review of the available transaction data from ${window.startMonth} through ${window.endMonth}.`,
     `Data months available: ${window.availableMonths.join(', ')}. Missing months: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
-    'Give each specialist a distinct focus: total spending trends, category-level shifts, and income versus spending. Tell them to compare across the full available period, avoid unsupported conclusions, and return only the strongest findings. Do not produce findings yourself. Output a short plain-text task plan for the specialists.',
+    'Assign one focus to each specialist: total spending, category shifts, or income versus spending. Ask them to compare the full period and report only supported anomalies. Do not analyze the data or produce findings. Return only three short task labels, one per focus.',
     `Monthly data:\n${JSON.stringify(monthlyData)}`,
   ].join('\n\n');
 
-  return callHydrogen(prompt, { label: 'Hydrogen coordinator plan', maxOutputTokens: 2048, thinkingLevel: 'LOW' });
+  return callHydrogen(prompt, { label: 'Hydrogen coordinator plan', maxOutputTokens: 4096 });
 }
 
 async function runAgent(role, monthlyData, window, orchestrationPlan) {
@@ -110,16 +122,16 @@ async function runAgent(role, monthlyData, window, orchestrationPlan) {
     `Analyze the available transaction data in the rolling 12-calendar-month window ${window.startMonth} through ${window.endMonth}. The available data months are ${window.availableMonths.join(', ')}.`,
     `The following months have no transaction data in the app: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero spending; do not infer values for them.`,
     'The supplied values are EUR totals grouped by month and category.',
-    'Return valid JSON only, with this exact shape: {"agent":"role name","summary":"one or two clear sentences","findings":[{"month":"YYYY-MM","title":"short title","detail":"briefly explain the comparison using exact values from the data","severity":"low|medium|high"}]}.',
-    'Only report patterns supported by the supplied data. Do not invent transactions, merchants, or numbers. Treat findings as unusual behavior, not fraud. Include at most 3 of the clearest findings. Keep each detail to one short sentence. If no clear unusual patterns exist, return an empty findings array.',
+    'Return valid JSON only, with this exact shape: {"agent":"role name","summary":"a concise 10-15 word summary in 2–3 short sentences","findings":[{"month":"YYYY-MM","bullet":"a short anomaly description"}]}.',
+    'Only report patterns supported by the supplied data. Do not invent transactions, merchants, or numbers. Treat findings as unusual behavior, not fraud. Include at most 3 of the clearest findings. Each finding must be one brief bullet of at most 10 words, describing one anomaly only; do not include its date in the bullet because the app adds the month and year. Do not write a title, severity, cause, or extra explanation. Keep the summary to 30–40 words in 2–3 short sentences, covering the main trend and relevant context. If no clear unusual patterns exist, say so briefly and return an empty findings array.',
     `Monthly data:\n${JSON.stringify(monthlyData)}`,
   ].join('\n\n');
 
   const text = await callHydrogen(prompt, {
     json: true,
     label: `${role.agent} analyst`,
-    maxOutputTokens: 4096,
-    thinkingLevel: 'MEDIUM',
+    maxOutputTokens: 8192,
+    thinkingLevel: 'LOW',
   });
 
   let parsed;
@@ -135,16 +147,15 @@ async function runAgent(role, monthlyData, window, orchestrationPlan) {
   const allowedMonths = new Set(Object.keys(monthlyData));
   return {
     agent: role.agent,
-    summary: parsed.summary.slice(0, 600),
+    summary: parsed.summary.trim().split(/\s+/).slice(0, 40).join(' ').slice(0, 400),
     findings: parsed.findings.slice(0, 6).flatMap((finding, index) => {
-      if (!finding || !allowedMonths.has(finding.month) || typeof finding.title !== 'string' || typeof finding.detail !== 'string') return [];
-      const severity = ['low', 'medium', 'high'].includes(finding.severity) ? finding.severity : 'medium';
+      if (!finding || !allowedMonths.has(finding.month) || typeof finding.bullet !== 'string') return [];
+      const bullet = finding.bullet.trim().replace(/^[-•*]\s*/, '');
+      if (!bullet) return [];
       return [{
         id: `${role.agent}-${finding.month}-${index}`,
         month: finding.month,
-        title: finding.title.slice(0, 120),
-        detail: finding.detail.slice(0, 500),
-        severity,
+        bullet: bullet.slice(0, 120),
       }];
     }),
   };
@@ -182,13 +193,7 @@ const server = createServer(async (request, response) => {
 
     const orchestrationPlan = await runOrchestrator(monthlyData, window);
     const results = await Promise.all(roles.map((role) => runAgent(role, monthlyData, window, orchestrationPlan)));
-    const overallSummary = await callHydrogen([
-      'You are the coordinator reviewing findings from three specialist Gemini Hydrogen analysts.',
-      'Summarize the clearest shared or complementary observations in two short sentences. Do not add new numbers, months, causes, or claims that are absent from the specialists’ results. If no findings are reported, say no clear unusual pattern was found.',
-      `Analysis window: ${window.startMonth} through ${window.endMonth}.`,
-      `Specialist results:\n${JSON.stringify(results)}`,
-    ].join('\n\n'), { label: 'Hydrogen final review', maxOutputTokens: 1024, thinkingLevel: 'LOW' });
-    return send(response, 200, { results, overallSummary, model, workflow: 'Hydrogen coordinator → 3 Hydrogen analysts → Hydrogen review' });
+    return send(response, 200, { results, model, workflow: 'Hydrogen coordinator → 3 Hydrogen analysts' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Gemini analysis failed.';
     return send(response, 502, { error: message });

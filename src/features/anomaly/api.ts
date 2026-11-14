@@ -4,9 +4,7 @@ import type { AnalysisWindow, MonthlyTransactionSummary } from '@/data/transacti
 export type Finding = {
   id: string;
   month: string;
-  title: string;
-  detail: string;
-  severity: 'low' | 'medium' | 'high';
+  bullet: string;
 };
 
 export type AgentResult = {
@@ -17,7 +15,6 @@ export type AgentResult = {
 
 export type GeminiAnalysis = {
   results: AgentResult[];
-  overallSummary: string;
   model: string;
   workflow: string;
 };
@@ -38,7 +35,7 @@ export async function analyzeWithGemini(
 
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `Analysis server returned HTTP ${response.status}.`);
-  if (!Array.isArray(result.results) || typeof result.overallSummary !== 'string') {
+  if (!Array.isArray(result.results)) {
     throw new Error('The analysis server returned an invalid response.');
   }
   return result as GeminiAnalysis;
