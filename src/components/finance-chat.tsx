@@ -30,7 +30,7 @@ const inkMuted = '#4f615b';
 
 const suggestions = [
   'Where did my money go last month?',
-  'How did my income change?',
+  'What does ETF mean?',
   'Am I spending more than I earn?',
   'Where should I invest spare money?',
 ];
@@ -135,7 +135,7 @@ function FinanceChat() {
               <View style={styles.emptyState}>
                 <Text style={styles.intro}>Ask anything about your own money.</Text>
                 <Text style={styles.introSub}>
-                  I answer from your last 12 months of transactions.
+                  I answer from your last 12 months of transactions and can explain any money term.
                 </Text>
                 {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
                 {opened && (
