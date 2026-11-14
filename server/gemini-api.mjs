@@ -256,14 +256,42 @@ async function runChat(messages, monthlyData, window) {
     'You are a friendly personal finance coach inside a banking app, talking with the account owner about their own money.',
     'Answer only from the supplied monthly EUR totals grouped by month and category. Never invent transactions, merchants, or numbers. If the data cannot answer the question, say so briefly.',
     `The data covers ${window.startMonth} through ${window.endMonth}. Months with no data: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
-    'Reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    'Write the reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    'Then propose exactly 3 follow-up questions the user could tap next, in this order: (1) dig deeper into what the reply just mentioned, (2) compare it with another month, the average, or income, (3) a practical next step such as cutting a category or saving. Write each as the user would ask it, in first person, at most 6 words and 40 characters. Only mention categories and months present in the data, never invent numbers, and do not repeat questions already asked.',
+    'Also pick a shortcut to a related app screen: "spending" if the reply is about where money went or category breakdowns, "anomaly" if it is about unusual or sudden changes, "savings" if it is about saving or goals, otherwise "none".',
+    'Return valid JSON only in this shape: {"reply":"plain text answer","suggestions":["dig deeper","compare","next step"],"shortcut":"spending|anomaly|savings|none"}.',
     `Monthly data:\n${JSON.stringify(monthlyData)}`,
-    `Conversation so far:\n${transcript}\n\nCoach:`,
+    `Conversation so far:\n${transcript}`,
   ].join('\n\n');
 
-  const text = await callHydrogen(prompt, { label: 'Chat coach', maxOutputTokens: 2048 });
-  return text.replace(/^Coach:\s*/i, '').slice(0, 2000);
+  const text = await callHydrogen(prompt, { json: true, label: 'Chat coach', maxOutputTokens: 2048 });
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+  // If the model ignored the JSON format, still show its answer; the app falls back to static chips.
+  const reply = typeof parsed?.reply === 'string' && parsed.reply.trim()
+    ? parsed.reply.trim()
+    : parsed ? '' : text.replace(/^Coach:\s*/i, '').trim();
+  if (!reply) throw new Error('The coach returned an unexpected response. Try again.');
+
+  const asked = new Set(messages.filter((m) => m.role === 'user').map((m) => m.text.trim().toLowerCase()));
+  const suggestions = [];
+  for (const item of Array.isArray(parsed?.suggestions) ? parsed.suggestions : []) {
+    if (typeof item !== 'string') continue;
+    const clean = item.trim().slice(0, 60);
+    const key = clean.toLowerCase();
+    if (!clean || asked.has(key) || suggestions.some((s) => s.toLowerCase() === key)) continue;
+    suggestions.push(clean);
+    if (suggestions.length === 3) break;
+  }
+  const shortcut = chatShortcuts.has(parsed?.shortcut) ? parsed.shortcut : 'none';
+  return { reply: reply.slice(0, 2000), suggestions, shortcut };
 }
+
+const chatShortcuts = new Set(['spending', 'anomaly', 'savings', 'none']);
 
 function validateWindow(window, monthlyData) {
   return Boolean(window && /^\d{4}-\d{2}$/.test(window.startMonth) && /^\d{4}-\d{2}$/.test(window.endMonth) &&
@@ -308,8 +336,8 @@ const server = createServer(async (request, response) => {
       if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
       if (!validateWindow(window, monthlyData)) return send(response, 400, { error: 'The 12-month data window is missing or invalid.' });
       if (!validateChatMessages(requestData.messages)) return send(response, 400, { error: 'The chat messages are missing or invalid.' });
-      const reply = await runChat(requestData.messages, monthlyData, window);
-      return send(response, 200, { reply, model });
+      const chat = await runChat(requestData.messages, monthlyData, window);
+      return send(response, 200, { ...chat, model });
     }
 
     if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
