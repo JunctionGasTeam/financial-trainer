@@ -48,6 +48,35 @@ export function FinanceReportEntry() {
               size={20}
             />
           </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open anomaly detection"
+            onPress={() => router.push('/anomaly-detection' as Href)}
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            <View style={styles.iconBadge}>
+              <SymbolView
+                name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
+                tintColor={bankGreen}
+                size={26}
+              />
+            </View>
+
+            <View style={styles.buttonCopy}>
+              <ThemedText type="smallBold" style={styles.buttonTitle}>
+                Anomaly detection
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Review unusual monthly patterns
+              </ThemedText>
+            </View>
+
+            <SymbolView
+              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+              tintColor={bankGreen}
+              size={20}
+            />
+          </Pressable>
         </View>
       </SafeAreaView>
     </ThemedView>
