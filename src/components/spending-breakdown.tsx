@@ -55,7 +55,7 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   );
   const monthLabel = selectedMonth ? formatMonth(selectedMonth) : 'Loading months…';
   const monthMenuHeight = Math.min(280, monthOptions.length * 44);
-  const monthMenuTop = safeAreaInsets.top + 56 + 10 + 46 + 6;
+  const monthMenuTop = safeAreaInsets.top + 72 + 10 + 46 + 6;
   const loadingSummary = !loadError && (!selectedMonth || loadedMonth !== selectedMonth);
   const pages = [
     { key: 'spending', label: 'Spending', centerLabel: 'SPENT', data: monthSummary.spending },
@@ -387,15 +387,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    height: 56,
+    height: 72,
+    paddingTop: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
   },
   closeButton: {
-    width: 38,
-    height: 38,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 19,
@@ -410,7 +411,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   headerBalance: {
-    width: 38,
+    width: 48,
   },
   segmentedControl: {
     flexDirection: 'row',

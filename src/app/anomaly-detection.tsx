@@ -131,10 +131,10 @@ export default function AnomalyDetectionScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   safeArea: { flex: 1 },
-  header: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  header: { height: 72, paddingTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
+  closeButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   closeGlyph: { fontSize: 29, lineHeight: 32, fontWeight: '300' },
-  headerBalance: { width: 38 },
+  headerBalance: { width: 48 },
   content: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 32, gap: 14 },
   eyebrow: { letterSpacing: 1 },
   title: { marginTop: -8 },
