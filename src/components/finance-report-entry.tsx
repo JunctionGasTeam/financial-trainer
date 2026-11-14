@@ -77,6 +77,35 @@ export function FinanceReportEntry() {
               size={20}
             />
           </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open savings goal planner"
+            onPress={() => router.push('/savings-goal' as Href)}
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            <View style={styles.iconBadge}>
+              <SymbolView
+                name={{ ios: 'target', android: 'track_changes', web: 'track_changes' }}
+                tintColor={bankGreen}
+                size={26}
+              />
+            </View>
+
+            <View style={styles.buttonCopy}>
+              <ThemedText type="smallBold" style={styles.buttonTitle}>
+                Savings goal
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Build a plan from your spending habits
+              </ThemedText>
+            </View>
+
+            <SymbolView
+              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+              tintColor={bankGreen}
+              size={20}
+            />
+          </Pressable>
         </View>
       </SafeAreaView>
     </ThemedView>

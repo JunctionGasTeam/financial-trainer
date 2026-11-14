@@ -28,6 +28,10 @@ export default function RootLayout() {
             name="anomaly-detection"
             options={{ presentation: 'fullScreenModal', gestureEnabled: true }}
           />
+          <Stack.Screen
+            name="savings-goal"
+            options={{ presentation: 'fullScreenModal', gestureEnabled: true }}
+          />
         </Stack>
       </ThemeProvider>
     </SQLiteProvider>

@@ -55,6 +55,86 @@ function validateMonthlyData(data) {
   });
 }
 
+function validateSavingsCoachInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  if (!Number.isFinite(input.goalAmount) || input.goalAmount <= 0 || input.goalAmount > 1_000_000_000) return false;
+  if (typeof input.profileType !== 'string' || input.profileType.length > 80) return false;
+  if (typeof input.profileDescription !== 'string' || input.profileDescription.length > 600) return false;
+  if (!Number.isFinite(input.averageMonthlyIncome) || input.averageMonthlyIncome < 0) return false;
+  if (!Number.isFinite(input.averageMonthlySpending) || input.averageMonthlySpending < 0) return false;
+  if (!Number.isFinite(input.medianMonthlySurplus)) return false;
+  if (!Number.isFinite(input.balancedMonthlyContribution) || input.balancedMonthlyContribution < 0) return false;
+  if (!Number.isInteger(input.targetMonths) || input.targetMonths < 1 || input.targetMonths > 600 ||
+    !Number.isFinite(input.monthlyTarget) || input.monthlyTarget < 0 ||
+    !Number.isFinite(input.additionalCutNeeded) || input.additionalCutNeeded < 0 ||
+    typeof input.selectedScenario !== 'string' || input.selectedScenario.length > 80 ||
+    !Number.isFinite(input.plannedMonthlySaving) || input.plannedMonthlySaving < 0) return false;
+  if (!Array.isArray(input.recommendedCuts) || input.recommendedCuts.length > 8 ||
+    !input.recommendedCuts.every((item) => item && typeof item.category === 'string' && item.category.length <= 80 &&
+      Number.isFinite(item.amount) && item.amount >= 0)) return false;
+  if (!Array.isArray(input.timelineOptions) || input.timelineOptions.length < 1 || input.timelineOptions.length > 8 ||
+    input.timelineOptions.some((item) => !item || !Number.isInteger(item.months) || item.months < 1 || item.months > 600 ||
+      !Number.isFinite(item.requiredMonthlySaving) || item.requiredMonthlySaving < 0 ||
+      typeof item.coveredByTypicalBalance !== 'boolean' || typeof item.coveredByBalancedPlan !== 'boolean')) return false;
+  if (!Array.isArray(input.topCategories) || input.topCategories.length > 8) return false;
+  return input.topCategories.every((item) => item && typeof item.category === 'string' && item.category.length <= 80 &&
+    Number.isFinite(item.averageMonthly) && item.averageMonthly >= 0 && Number.isFinite(item.share) && item.share >= 0 && item.share <= 1);
+}
+
+async function runSavingsCoach(input) {
+  const safeInput = {
+    goalAmount: Math.round(input.goalAmount),
+    profileType: input.profileType,
+    profileDescription: input.profileDescription,
+    averageMonthlyIncome: Math.round(input.averageMonthlyIncome),
+    averageMonthlySpending: Math.round(input.averageMonthlySpending),
+    medianMonthlySurplus: Math.round(input.medianMonthlySurplus),
+    balancedMonthlyContribution: Math.round(input.balancedMonthlyContribution),
+    targetMonths: input.targetMonths,
+    monthlyTarget: Math.round(input.monthlyTarget),
+    additionalCutNeeded: Math.round(input.additionalCutNeeded),
+    selectedScenario: input.selectedScenario,
+    plannedMonthlySaving: Math.round(input.plannedMonthlySaving),
+    recommendedCuts: input.recommendedCuts.map((item) => ({ category: item.category, amount: Math.round(item.amount) })),
+    timelineOptions: input.timelineOptions.map((item) => ({
+      months: item.months,
+      requiredMonthlySaving: Math.round(item.requiredMonthlySaving),
+      coveredByTypicalBalance: item.coveredByTypicalBalance,
+      coveredByBalancedPlan: item.coveredByBalancedPlan,
+    })),
+    topCategories: input.topCategories.map((item) => ({
+      category: item.category,
+      averageMonthly: Math.round(item.averageMonthly),
+      sharePercent: Math.round(item.share * 100),
+    })),
+  };
+  const text = await callHydrogen([
+    'You are a practical personal-finance coach. Give the user a clear, specific recommendation for reaching their savings goal.',
+    'Use only supplied figures. Never invent transactions, dates, categories, or amounts. Do not promise an outcome.',
+    'Choose a recommendedMonths value from timelineOptions. Prefer the shortest timeline covered by the typical monthly balance; if none is covered, choose the shortest covered by the balanced plan. If none is covered by either, choose the longest available option and explain the monthly shortfall plainly.',
+    'The user is currently viewing a specific target deadline and selected scenario. Write insight as two short sentences that directly address targetMonths: state monthlyTarget, compare it with plannedMonthlySaving, and clearly say whether the selected scenario is on track or short by the exact difference. Write action as one concrete adjustment using recommendedCuts and the matching category names. Do not recommend numbers that conflict with those supplied. If the required cuts exceed flexible spending, say the deadline is not achievable through those cuts alone. If essentials dominate, advise protecting essentials and only adjusting flexible categories. Keep AI advice specific and useful; no generic transfer tips.',
+    'Return valid JSON only in this shape: {"recommendedMonths":18,"insight":"two specific, concise sentences","action":"one concrete suggestion"}. Use an integer for recommendedMonths and an available timeline option.',
+    `Savings and spending summary:\n${JSON.stringify(safeInput)}`,
+  ].join('\n\n'), { json: true, label: 'Savings goal coach', maxOutputTokens: 4096, thinkingLevel: 'LOW' });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Savings coach returned incomplete JSON. Try again.');
+  }
+  const availableTimelines = new Set(input.timelineOptions.map((item) => item.months));
+  if (!parsed || typeof parsed.insight !== 'string' || typeof parsed.action !== 'string' ||
+    !Number.isInteger(parsed.recommendedMonths) || !availableTimelines.has(parsed.recommendedMonths)) {
+    throw new Error('Savings coach returned an unexpected response.');
+  }
+  return {
+    recommendedMonths: parsed.recommendedMonths,
+    insight: parsed.insight.slice(0, 500),
+    action: parsed.action.slice(0, 260),
+  };
+}
+
 async function callHydrogen(prompt, {
   json = false,
   label = 'Hydrogen request',
@@ -163,7 +243,8 @@ async function runAgent(role, monthlyData, window, orchestrationPlan) {
 
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') return send(response, 204, {});
-  if (request.method !== 'POST' || request.url !== '/api/analyze') return send(response, 404, { error: 'Not found.' });
+  const routePath = new URL(request.url || '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
+  if (request.method !== 'POST' || !['/api/analyze', '/api/savings-coach'].includes(routePath)) return send(response, 404, { error: 'Not found.' });
   if (!process.env.GEMINI_API_KEY) return send(response, 503, { error: 'GEMINI_API_KEY is missing from the server environment.' });
 
   const ip = request.socket.remoteAddress || 'unknown';
@@ -181,6 +262,12 @@ const server = createServer(async (request, response) => {
     } catch {
       return send(response, 400, { error: 'The app sent an invalid request body. Restart Expo and try again.' });
     }
+    if (routePath === '/api/savings-coach') {
+      if (!validateSavingsCoachInput(requestData)) return send(response, 400, { error: 'Savings goal analysis is missing or invalid.' });
+      const coach = await runSavingsCoach(requestData);
+      return send(response, 200, coach);
+    }
+
     const { monthlyData, window } = requestData;
     if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
     if (!window || !/^\d{4}-\d{2}$/.test(window.startMonth) || !/^\d{4}-\d{2}$/.test(window.endMonth) ||
