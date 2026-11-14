@@ -17,6 +17,7 @@ export type RecentTransactionData = {
   monthlyData: Record<string, MonthlyTransactionSummary>;
 };
 export type TransactionMonthRange = { firstMonth: string; lastMonth: string };
+export type SalaryIncomeEstimate = { averageMonthlyIncome: number; monthsWithSalary: number };
 
 type AggregateRow = {
   month: string;
@@ -98,6 +99,34 @@ export async function getRecentTransactionData(
   return {
     window: { startMonth, endMonth, requestedMonths, availableMonths, missingMonths },
     monthlyData,
+  };
+}
+
+export async function getRecentSalaryIncomeEstimate(
+  db: SQLiteDatabase,
+  now = new Date(),
+  customerId = CUSTOMER_ID,
+): Promise<SalaryIncomeEstimate | null> {
+  const months = getLastTwelveMonthKeys(now);
+  const rows = await db.getAllAsync<{ month: string; income: number }>(
+    `SELECT substr(tx_date, 1, 7) AS month, ROUND(SUM(tx_amount_eur), 2) AS income
+     FROM transactions
+     WHERE customer_id = ?
+       AND tx_date >= ?
+       AND tx_date < ?
+       AND tx_amount_eur > 0
+       AND (category = 'Salary' OR lower(transaction_type) = 'salary')
+     GROUP BY substr(tx_date, 1, 7)
+     ORDER BY month`,
+    customerId,
+    `${months[0]}-01`,
+    `${nextMonthKey(months[months.length - 1])}-01`,
+  );
+  if (rows.length === 0) return null;
+  const averageMonthlyIncome = rows.reduce((total, row) => total + row.income, 0) / rows.length;
+  return {
+    averageMonthlyIncome: Math.round(averageMonthlyIncome),
+    monthsWithSalary: rows.length,
   };
 }
 
