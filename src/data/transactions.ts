@@ -17,6 +17,22 @@ export type RecentTransactionData = {
   monthlyData: Record<string, MonthlyTransactionSummary>;
 };
 export type TransactionMonthRange = { firstMonth: string; lastMonth: string };
+export type SalaryIncomeEstimate = { averageMonthlyIncome: number; monthsWithSalary: number };
+export type SpendingTransactionForClassification = {
+  transactionId: number;
+  date: string;
+  category: string;
+  transactionType: string;
+  mccCode: string | null;
+  amount: number;
+  priorTransactionsAtMerchant: number;
+};
+export type SpendingCategoryHistory = {
+  category: string;
+  transactionCount: number;
+  monthsActive: number;
+  totalAmount: number;
+};
 
 type AggregateRow = {
   month: string;
@@ -83,6 +99,58 @@ export async function getMonthlyTransactionSummary(
   return monthlyData[month] ?? emptyMonthlySummary();
 }
 
+export async function getSpendingClassificationData(
+  db: SQLiteDatabase,
+  month: string,
+  customerId = CUSTOMER_ID,
+): Promise<{ transactions: SpendingTransactionForClassification[]; categoryHistory: SpendingCategoryHistory[] }> {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const historyStart = new Date(year, monthNumber - 12, 1);
+  const historyStartMonth = `${historyStart.getFullYear()}-${String(historyStart.getMonth() + 1).padStart(2, '0')}`;
+  const nextMonth = nextMonthKey(month);
+  const transactions = await db.getAllAsync<SpendingTransactionForClassification>(
+    `SELECT current.rowid AS transactionId,
+            current.tx_date AS date,
+            current.category,
+            current.transaction_type AS transactionType,
+            current.mcc_code AS mccCode,
+            ROUND(ABS(current.tx_amount_eur), 2) AS amount,
+            (SELECT COUNT(*) FROM transactions AS previous
+             WHERE previous.customer_id = current.customer_id
+               AND previous.merchant_id = current.merchant_id
+               AND previous.tx_date >= ?
+               AND previous.tx_date < current.tx_date
+               AND previous.tx_amount_eur < 0) AS priorTransactionsAtMerchant
+     FROM transactions AS current
+     WHERE current.customer_id = ?
+       AND current.tx_date >= ?
+       AND current.tx_date < ?
+       AND current.tx_amount_eur < 0
+     ORDER BY current.tx_timestamp`,
+    `${historyStartMonth}-01`,
+    customerId,
+    `${month}-01`,
+    `${nextMonth}-01`,
+  );
+  const categoryHistory = await db.getAllAsync<SpendingCategoryHistory>(
+    `SELECT category,
+            COUNT(*) AS transactionCount,
+            COUNT(DISTINCT substr(tx_date, 1, 7)) AS monthsActive,
+            ROUND(SUM(ABS(tx_amount_eur)), 2) AS totalAmount
+     FROM transactions
+     WHERE customer_id = ?
+       AND tx_date >= ?
+       AND tx_date < ?
+       AND tx_amount_eur < 0
+     GROUP BY category
+     ORDER BY totalAmount DESC`,
+    customerId,
+    `${historyStartMonth}-01`,
+    `${nextMonth}-01`,
+  );
+  return { transactions, categoryHistory };
+}
+
 export async function getRecentTransactionData(
   db: SQLiteDatabase,
   now = new Date(),
@@ -98,6 +166,34 @@ export async function getRecentTransactionData(
   return {
     window: { startMonth, endMonth, requestedMonths, availableMonths, missingMonths },
     monthlyData,
+  };
+}
+
+export async function getRecentSalaryIncomeEstimate(
+  db: SQLiteDatabase,
+  now = new Date(),
+  customerId = CUSTOMER_ID,
+): Promise<SalaryIncomeEstimate | null> {
+  const months = getLastTwelveMonthKeys(now);
+  const rows = await db.getAllAsync<{ month: string; income: number }>(
+    `SELECT substr(tx_date, 1, 7) AS month, ROUND(SUM(tx_amount_eur), 2) AS income
+     FROM transactions
+     WHERE customer_id = ?
+       AND tx_date >= ?
+       AND tx_date < ?
+       AND tx_amount_eur > 0
+       AND (category = 'Salary' OR lower(transaction_type) = 'salary')
+     GROUP BY substr(tx_date, 1, 7)
+     ORDER BY month`,
+    customerId,
+    `${months[0]}-01`,
+    `${nextMonthKey(months[months.length - 1])}-01`,
+  );
+  if (rows.length === 0) return null;
+  const averageMonthlyIncome = rows.reduce((total, row) => total + row.income, 0) / rows.length;
+  return {
+    averageMonthlyIncome: Math.round(averageMonthlyIncome),
+    monthsWithSalary: rows.length,
   };
 }
 

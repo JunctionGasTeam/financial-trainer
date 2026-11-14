@@ -20,12 +20,14 @@ import { Circle, Path, Svg } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
+  getSpendingClassificationData,
   getMonthlyTransactionSummary,
   getTransactionMonthRange,
   type MonthlyTransactionSummary,
   type MonthlyCategory,
   type TransactionMonthRange,
 } from '@/data/transactions';
+import { classifySpendingTransactions, type SpendingType } from '@/features/spending/api';
 import { useTheme } from '@/hooks/use-theme';
 
 const bankGreen = '#008044';
@@ -35,6 +37,7 @@ const emptySummary: MonthlyTransactionSummary = {
 };
 
 type PageIndex = 0 | 1;
+type DiagramCategory = MonthlyCategory & { details?: MonthlyCategory[] };
 
 export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const db = useSQLiteContext();
@@ -44,6 +47,8 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [loadedMonth, setLoadedMonth] = useState('');
   const [monthSummary, setMonthSummary] = useState(emptySummary);
+  const [spendingGroups, setSpendingGroups] = useState<DiagramCategory[]>([]);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState('');
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
   const pagerRef = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -58,8 +63,14 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const monthMenuTop = safeAreaInsets.top + 72 + 10 + 46 + 6;
   const loadingSummary = !loadError && (!selectedMonth || loadedMonth !== selectedMonth);
   const pages = [
-    { key: 'spending', label: 'Spending', centerLabel: 'SPENT', data: monthSummary.spending },
-    { key: 'income', label: 'Income', centerLabel: 'RECEIVED', data: monthSummary.income },
+    {
+      key: 'spending', label: 'Spending', listHeading: 'Spending by type', centerLabel: 'SPENT',
+      total: spendingGroups.reduce((sum, group) => sum + group.amount, 0), categories: spendingGroups,
+    },
+    {
+      key: 'income', label: 'Income', listHeading: 'Income by category', centerLabel: 'RECEIVED',
+      total: monthSummary.income.total, categories: monthSummary.income.categories,
+    },
   ] as const;
 
   useEffect(() => {
@@ -83,17 +94,28 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!selectedMonth) return;
     let active = true;
-    getMonthlyTransactionSummary(db, selectedMonth).then((summary) => {
-      if (active) {
+    async function loadSelectedMonth() {
+      try {
+        const [summary, classificationData] = await Promise.all([
+          getMonthlyTransactionSummary(db, selectedMonth),
+          getSpendingClassificationData(db, selectedMonth),
+        ]);
+        const classifications = classificationData.transactions.length > 0
+          ? await classifySpendingTransactions(classificationData.transactions, classificationData.categoryHistory)
+          : [];
+        const groups = buildSpendingGroups(classificationData.transactions, classifications);
+        if (!active) return;
         setMonthSummary(summary);
+        setSpendingGroups(groups);
         setLoadedMonth(selectedMonth);
         setLoadError('');
+      } catch (cause) {
+        if (active) setLoadError(cause instanceof Error ? cause.message : 'Could not load and classify this month.');
       }
-    }).catch(() => {
-      if (active) setLoadError('Could not load this month from the SQLite database.');
-    });
+    }
+    void loadSelectedMonth();
     return () => { active = false; };
-  }, [db, selectedMonth]);
+  }, [db, selectedMonth, loadAttempt]);
 
   function selectPage(index: PageIndex) {
     setActivePage(index);
@@ -160,11 +182,23 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
         {loadingSummary ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={bankGreen} />
-            <ThemedText type="small" themeColor="textSecondary">{loadError || 'Loading transactions…'}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">{loadError || 'Loading transactions and classifying spending with Gemini…'}</ThemedText>
           </View>
         ) : loadError ? (
           <View style={styles.loadingState}>
             <ThemedText type="small" themeColor="textSecondary">{loadError}</ThemedText>
+            {selectedMonth ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setLoadError('');
+                  setLoadedMonth('');
+                  setLoadAttempt((attempt) => attempt + 1);
+                }}
+                style={styles.retryButton}>
+                <ThemedText type="smallBold" style={styles.retryText}>Try again</ThemedText>
+              </Pressable>
+            ) : null}
           </View>
         ) : (
           <ScrollView
@@ -179,9 +213,10 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
                 <CategoryPage
                   width={width}
                   label={page.label}
+                  listHeading={page.listHeading}
                   centerLabel={page.centerLabel}
-                  total={page.data.total}
-                  categories={page.data.categories}
+                  total={page.total}
+                  categories={page.categories}
                   monthLabel={monthLabel}
                 />
               </View>
@@ -220,7 +255,9 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
                   accessibilityState={{ selected: month === selectedMonth }}
                   onPress={() => {
                     setLoadError('');
+                    setLoadedMonth('');
                     setSelectedMonth(month);
+                    setLoadAttempt((attempt) => attempt + 1);
                     setMonthMenuOpen(false);
                   }}
                   style={[styles.monthOption, month === selectedMonth && styles.monthOptionSelected]}>
@@ -240,6 +277,7 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
 function CategoryPage({
   width,
   label,
+  listHeading,
   centerLabel,
   total,
   categories,
@@ -247,13 +285,15 @@ function CategoryPage({
 }: {
   width: number;
   label: string;
+  listHeading: string;
   centerLabel: string;
   total: number;
-  categories: readonly MonthlyCategory[];
+  categories: readonly DiagramCategory[];
   monthLabel: string;
 }) {
   const theme = useTheme();
   const chartSize = Math.min(width - 48, 252);
+  const visibleCategories = categories.filter((category) => category.amount > 0);
 
   return (
     <ScrollView
@@ -265,13 +305,13 @@ function CategoryPage({
 
       <View style={[styles.chartWrap, { width: chartSize, height: chartSize }]}>
         <Svg width={chartSize} height={chartSize} viewBox="0 0 220 220">
-          {categories.length === 0 ? (
+          {visibleCategories.length === 0 ? (
             <Circle cx={110} cy={110} r={102} fill={theme.backgroundElement} />
-          ) : categories.length === 1 ? (
-            <Circle cx={110} cy={110} r={102} fill={categories[0].color} />
+          ) : visibleCategories.length === 1 ? (
+            <Circle cx={110} cy={110} r={102} fill={visibleCategories[0].color} />
           ) : (
-            categories.map((category, index) => {
-              const startAngle = -90 + (categories
+            visibleCategories.map((category, index) => {
+              const startAngle = -90 + (visibleCategories
                 .slice(0, index)
                 .reduce((sum, item) => sum + item.amount, 0) / total) * 360;
               const endAngle = startAngle + (category.amount / total) * 360;
@@ -298,10 +338,10 @@ function CategoryPage({
 
       <View style={styles.listHeading}>
         <ThemedText type="subtitle" style={styles.listTitle}>
-          {label} by category
+          {listHeading}
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {categories.length} {categories.length === 1 ? 'category' : 'categories'}
+          {label === 'Spending' ? '3 spending types' : `${categories.length} ${categories.length === 1 ? 'category' : 'categories'}`}
         </ThemedText>
       </View>
 
@@ -321,12 +361,65 @@ function CategoryPage({
                   {formatEuro(category.amount)}
                 </ThemedText>
               </View>
+              {category.details ? (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.categoryDetails}>
+                  {category.details.length > 0
+                    ? category.details.map((detail) => `${detail.category} ${formatEuro(detail.amount)}`).join(' · ')
+                    : 'No transactions recorded in this type.'}
+                </ThemedText>
+              ) : null}
             </View>
           ))
         )}
       </ThemedView>
     </ScrollView>
   );
+}
+
+const spendingTypeDefinitions: { type: SpendingType; category: string; color: string }[] = [
+    {
+      type: 'mandatory_regular',
+      category: 'Mandatory & regular',
+      color: '#008044',
+    },
+    {
+      type: 'mandatory_irregular',
+      category: 'Mandatory & irregular',
+      color: '#5c8db0',
+    },
+    {
+      type: 'everyday_flexible',
+      category: 'Everyday spending that slips through your fingers',
+      color: '#d5a338',
+    },
+  ];
+
+function buildSpendingGroups(
+  transactions: { transactionId: number; category: string; amount: number }[],
+  classifications: { transactionId: number; spendingType: SpendingType }[],
+): DiagramCategory[] {
+  const classificationById = new Map(classifications.map((item) => [item.transactionId, item.spendingType]));
+  const detailsByType = new Map<SpendingType, Map<string, number>>();
+  for (const definition of spendingTypeDefinitions) detailsByType.set(definition.type, new Map());
+
+  for (const transaction of transactions) {
+    const spendingType = classificationById.get(transaction.transactionId);
+    if (!spendingType) throw new Error('Gemini did not classify every spending transaction.');
+    const details = detailsByType.get(spendingType);
+    if (!details) throw new Error('Gemini returned an unsupported spending type.');
+    details.set(transaction.category, (details.get(transaction.category) ?? 0) + transaction.amount);
+  }
+
+  return spendingTypeDefinitions.map((definition) => {
+    const details = [...(detailsByType.get(definition.type) ?? new Map())]
+      .map(([category, amount]) => ({ category, amount, color: definition.color }));
+    return {
+      category: definition.category,
+      color: definition.color,
+      amount: details.reduce((sum, item) => sum + item.amount, 0),
+      details,
+    };
+  });
 }
 
 function sectorPath(startAngle: number, endAngle: number) {
@@ -558,9 +651,18 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
   },
+  categoryDetails: {
+    marginLeft: 22,
+    marginTop: -5,
+    marginBottom: 10,
+    fontSize: 11,
+    lineHeight: 16,
+  },
   categoryAmount: {
     fontVariant: ['tabular-nums'],
   },
+  retryButton: { marginTop: 6, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 12, backgroundColor: '#e2f3e8' },
+  retryText: { color: bankGreen },
   pressed: {
     opacity: 0.75,
   },

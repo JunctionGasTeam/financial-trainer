@@ -81,6 +81,174 @@ function validateSavingsCoachInput(input) {
     Number.isFinite(item.averageMonthly) && item.averageMonthly >= 0 && Number.isFinite(item.share) && item.share >= 0 && item.share <= 1);
 }
 
+function validateMortgagePredictionInput(input) {
+  if (!input || typeof input !== 'object' || !input.applicant || !input.historicalSample ||
+    !Array.isArray(input.rejectionReasons) || !Array.isArray(input.historicalCases)) return false;
+  const a = input.applicant;
+  if (![a.propertyPrice, a.equityAmount, a.monthlyIncome, a.collateralValue, a.requestedLoan, a.loanToValue, a.equityRatio]
+    .every(Number.isFinite) || a.propertyPrice <= 0 || a.propertyPrice > 50_000_000 || a.equityAmount < 0 ||
+    a.equityAmount >= a.propertyPrice || a.monthlyIncome <= 0 || a.monthlyIncome > 5_000_000 ||
+    a.collateralValue < 0 || a.collateralValue > 100_000_000 ||
+    !['recent_salary_transactions', 'user_entered'].includes(a.incomeSource) ||
+    !Number.isInteger(a.incomeMonthsWithSalary) || a.incomeMonthsWithSalary < 0 || a.incomeMonthsWithSalary > 12 ||
+    (a.incomeSource === 'user_entered' && a.incomeMonthsWithSalary !== 0) ||
+    (a.incomeSource === 'recent_salary_transactions' && a.incomeMonthsWithSalary < 1) ||
+    Math.abs(a.requestedLoan - (a.propertyPrice - a.equityAmount)) > 1 ||
+    Math.abs(a.loanToValue - a.requestedLoan / a.propertyPrice) > 0.001 ||
+    Math.abs(a.equityRatio - a.equityAmount / a.propertyPrice) > 0.001) return false;
+  const sample = input.historicalSample;
+  if (![sample.totalCases, sample.approvedCases, sample.rejectedCases].every(Number.isInteger) ||
+    sample.totalCases < 1 || sample.totalCases > 100_000 || sample.approvedCases + sample.rejectedCases !== sample.totalCases) return false;
+  if (input.rejectionReasons.length > 12 || input.rejectionReasons.some((item) => !item ||
+    typeof item.reason !== 'string' || item.reason.length > 100 || !Number.isInteger(item.cases) || item.cases < 0)) return false;
+  if (input.historicalCases.length < 1 || input.historicalCases.length > 500) return false;
+  const caseIds = new Set();
+  return input.historicalCases.every((item) => {
+    if (!item || typeof item.caseId !== 'string' || !/^case-\d+$/.test(item.caseId) || caseIds.has(item.caseId) ||
+      !['approved', 'rejected'].includes(item.outcome) ||
+      (item.rejectionReason != null && (typeof item.rejectionReason !== 'string' || item.rejectionReason.length > 100)) ||
+      !['propertyPrice', 'requestedLoan', 'equityAmount', 'collateralValue', 'requiredMonthlyIncome', 'loanToValue',
+        'existingLoanExpenseEntries', 'existingLoanExpenseRecordedTotal'].every((key) => Number.isFinite(item[key])) ||
+      item.propertyPrice <= 0 || item.requestedLoan <= 0 || item.equityAmount < 0 || item.collateralValue < 0 ||
+      item.requiredMonthlyIncome < 0 || item.loanToValue < 0 || item.loanToValue > 2 ||
+      item.existingLoanExpenseEntries < 0 || item.existingLoanExpenseRecordedTotal < 0 ||
+      typeof item.additionalCollateralRequested !== 'boolean') return false;
+    caseIds.add(item.caseId);
+    return true;
+  });
+}
+
+async function runMortgagePrediction(input) {
+  const caseSelectionText = await callHydrogen([
+    'You are the mortgage case-matching agent. You receive the full set of historical mortgage rows dynamically queried from the local SQLite database.',
+    'Select the five closest cases by comparing requested loan, loan-to-value, equity ratio, required income, and collateral coverage to the applicant. Consider both approved and rejected outcomes when similarly close. Use only caseIds present in the data. Return JSON only: {"caseIds":["case-1"],"summary":"one short sentence describing how the closest cases were selected"}. Select 3–5 cases when available.',
+    'If monthlyIncome is marked recent_salary_transactions, it is an average of observed salary deposits across incomeMonthsWithSalary months, not necessarily total or gross household income.',
+    `Applicant:\n${JSON.stringify(input.applicant)}`,
+    `Historical decision cases from SQLite:\n${JSON.stringify(input.historicalCases)}`,
+  ].join('\n\n'), { json: true, label: 'Mortgage case matching agent', maxOutputTokens: 1536, thinkingLevel: 'LOW' });
+  let caseSelection;
+  try {
+    caseSelection = JSON.parse(caseSelectionText);
+  } catch {
+    throw new Error('Mortgage case-matching agent returned incomplete JSON. Try again.');
+  }
+  const casesById = new Map(input.historicalCases.map((item) => [item.caseId, item]));
+  if (!caseSelection || !Array.isArray(caseSelection.caseIds) || caseSelection.caseIds.length < 1 ||
+    caseSelection.caseIds.length > 5 || typeof caseSelection.summary !== 'string' ||
+    caseSelection.caseIds.some((id) => typeof id !== 'string' || !casesById.has(id)) ||
+    new Set(caseSelection.caseIds).size !== caseSelection.caseIds.length) {
+    throw new Error('Mortgage case-matching agent returned invalid case references.');
+  }
+  const selectedCases = caseSelection.caseIds.map((id) => casesById.get(id));
+
+  const comparisonText = await callHydrogen([
+    'You are the mortgage applicant comparison agent.',
+    'Compare the applicant with the selected historical cases and overall decision counts. Explain the strongest similarities and differences using only supplied data. Do not make a final approval prediction; leave that to the next agent. Treat negotiation-history signals as context, and do not assume a period for recorded expense amounts.',
+    'If monthlyIncome is marked recent_salary_transactions, it is an average of observed salary deposits across incomeMonthsWithSalary months, not necessarily total or gross household income.',
+    'Return JSON only: {"comparison":"two concise sentences comparing the applicant with the selected cases","factors":["short evidence-based factor", "short evidence-based factor"]}. Include 2–3 concise factors.',
+    `Applicant:\n${JSON.stringify(input.applicant)}`,
+    `Historical sample and rejection reasons:\n${JSON.stringify({ historicalSample: input.historicalSample, rejectionReasons: input.rejectionReasons })}`,
+    `Closest cases selected by the first agent:\n${JSON.stringify({ selectionSummary: caseSelection.summary, cases: selectedCases })}`,
+  ].join('\n\n'), { json: true, label: 'Mortgage applicant comparison agent', maxOutputTokens: 2048, thinkingLevel: 'LOW' });
+  let comparison;
+  try {
+    comparison = JSON.parse(comparisonText);
+  } catch {
+    throw new Error('Mortgage applicant comparison agent returned incomplete JSON. Try again.');
+  }
+  if (!comparison || typeof comparison.comparison !== 'string' || !Array.isArray(comparison.factors) ||
+    comparison.factors.length < 1 || comparison.factors.length > 3 || !comparison.factors.every((factor) => typeof factor === 'string')) {
+    throw new Error('Mortgage applicant comparison agent returned an unexpected response.');
+  }
+
+  const finalText = await callHydrogen([
+    'You are the final mortgage prediction agent. Make the final estimate using the applicant data, historical decision outcomes, the first agent’s closest-case selection, and the second agent’s comparison.',
+    'Choose likely_approved, uncertain, or higher_rejection_risk. Use uncertain if the closest cases conflict or evidence is weak. Do not guarantee approval, invent percentages, or introduce facts not present in the analyses or data.',
+    'Respect the income source noted in the applicant data; a salary-deposit average may not represent total or gross household income.',
+    'Return JSON only: {"prediction":"likely_approved|uncertain|higher_rejection_risk","confidence":"low|moderate|high","summary":"two concise sentences explaining the estimate"}.',
+    `Applicant and historical outcome counts:\n${JSON.stringify({ applicant: input.applicant, historicalSample: input.historicalSample, rejectionReasons: input.rejectionReasons })}`,
+    `Closest case analysis:\n${JSON.stringify({ caseSelectionSummary: caseSelection.summary, selectedCases })}`,
+    `Applicant comparison analysis:\n${JSON.stringify(comparison)}`,
+  ].join('\n\n'), { json: true, label: 'Mortgage final prediction agent', maxOutputTokens: 2048, thinkingLevel: 'LOW' });
+  let parsed;
+  try {
+    parsed = JSON.parse(finalText);
+  } catch {
+    throw new Error('Mortgage final prediction agent returned incomplete JSON. Try again.');
+  }
+  const predictions = ['likely_approved', 'uncertain', 'higher_rejection_risk'];
+  const confidences = ['low', 'moderate', 'high'];
+  if (!parsed || !predictions.includes(parsed.prediction) || !confidences.includes(parsed.confidence) ||
+    typeof parsed.summary !== 'string') {
+    throw new Error('Mortgage final prediction agent returned an unexpected response.');
+  }
+  return {
+    prediction: parsed.prediction,
+    confidence: parsed.confidence,
+    summary: parsed.summary.slice(0, 500),
+    factors: comparison.factors.map((factor) => factor.slice(0, 180)),
+    closestCasesSummary: caseSelection.summary.slice(0, 300),
+    applicantComparison: comparison.comparison.slice(0, 500),
+    historicalSample: input.historicalSample,
+    similarCaseCount: selectedCases.length,
+  };
+}
+
+function validateSpendingClassificationInput(input) {
+  if (!input || !Array.isArray(input.transactions) || input.transactions.length > 500 ||
+    !Array.isArray(input.categoryHistory) || input.categoryHistory.length > 60) return false;
+  const transactionIds = new Set();
+  const transactionsValid = input.transactions.every((item) => {
+    if (!item || !Number.isSafeInteger(item.transactionId) || transactionIds.has(item.transactionId) ||
+      typeof item.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.date) ||
+      typeof item.category !== 'string' || !item.category || item.category.length > 80 ||
+      typeof item.transactionType !== 'string' || item.transactionType.length > 80 ||
+      (item.mccCode != null && (typeof item.mccCode !== 'string' || item.mccCode.length > 20)) ||
+      !Number.isFinite(item.amount) || item.amount <= 0 || !Number.isInteger(item.priorTransactionsAtMerchant) ||
+      item.priorTransactionsAtMerchant < 0) return false;
+    transactionIds.add(item.transactionId);
+    return true;
+  });
+  if (!transactionsValid || input.categoryHistory.some((item) => !item || typeof item.category !== 'string' ||
+    item.category.length > 80 || !Number.isInteger(item.transactionCount) || item.transactionCount < 0 ||
+    !Number.isInteger(item.monthsActive) || item.monthsActive < 0 || item.monthsActive > 12 ||
+    !Number.isFinite(item.totalAmount) || item.totalAmount < 0)) return false;
+  return true;
+}
+
+async function runSpendingClassification(input) {
+  if (input.transactions.length === 0) return { classifications: [] };
+  const text = await callHydrogen([
+    'Classify each supplied debit transaction for a personal spending diagram.',
+    'For every transaction, choose exactly one type: mandatory_regular (recurring essentials such as housing, utilities, essential groceries, or regular transport); mandatory_irregular (necessary but occasional costs such as essential repairs or unexpected health costs); everyday_flexible (optional day-to-day purchases such as coffee, dining, entertainment, or leisure). Use category, transaction type, merchant category code, amount, recent category history, and prior transactions at the same merchant. Do not use the amount alone to infer necessity. Do not map categories with a fixed lookup; assess each transaction using the supplied data. Every transaction must receive one type, including transfers, and never omit or invent an ID.',
+    'Return JSON only in this exact shape: {"classifications":[{"transactionId":123,"spendingType":"mandatory_regular|mandatory_irregular|everyday_flexible"}]}. Return one classification per transactionId and no other text.',
+    `Transactions from the selected month:\n${JSON.stringify(input.transactions)}`,
+    `Recent 12-month category history from SQLite:\n${JSON.stringify(input.categoryHistory)}`,
+  ].join('\n\n'), { json: true, label: 'Spending category classifier', maxOutputTokens: 4096, thinkingLevel: 'LOW' });
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Gemini returned incomplete spending classifications. Try again.');
+  }
+  const validTypes = ['mandatory_regular', 'mandatory_irregular', 'everyday_flexible'];
+  if (!parsed || !Array.isArray(parsed.classifications) || parsed.classifications.length !== input.transactions.length) {
+    throw new Error('Gemini did not classify every transaction. Try again.');
+  }
+  const classifiedIds = new Set();
+  const classifications = parsed.classifications.map((item) => {
+    if (!item || !Number.isSafeInteger(item.transactionId) || !validTypes.includes(item.spendingType) ||
+      classifiedIds.has(item.transactionId)) return null;
+    classifiedIds.add(item.transactionId);
+    return { transactionId: item.transactionId, spendingType: item.spendingType };
+  });
+  if (classifications.some((item) => item == null) ||
+    input.transactions.some((item) => !classifiedIds.has(item.transactionId))) {
+    throw new Error('Gemini returned invalid transaction classifications. Try again.');
+  }
+  return { classifications };
+}
+
 async function runSavingsCoach(input) {
   const safeInput = {
     goalAmount: Math.round(input.goalAmount),
@@ -322,7 +490,7 @@ function validateWindow(window, monthlyData) {
     !window.missingMonths.some((month) => !window.requestedMonths.includes(month)));
 }
 
-const routes = new Set(['/api/analyze', '/api/chat', '/api/savings-coach']);
+const routes = new Set(['/api/analyze', '/api/chat', '/api/savings-coach', '/api/mortgage-prediction', '/api/classify-spending']);
 
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') return send(response, 204, {});
@@ -344,6 +512,16 @@ const server = createServer(async (request, response) => {
       requestData = JSON.parse(body);
     } catch {
       return send(response, 400, { error: 'The app sent an invalid request body. Restart Expo and try again.' });
+    }
+    if (routePath === '/api/classify-spending') {
+      if (!validateSpendingClassificationInput(requestData)) return send(response, 400, { error: 'Spending transactions are missing or invalid.' });
+      const classification = await runSpendingClassification(requestData);
+      return send(response, 200, classification);
+    }
+    if (routePath === '/api/mortgage-prediction') {
+      if (!validateMortgagePredictionInput(requestData)) return send(response, 400, { error: 'Mortgage application inputs or historical cases are missing or invalid.' });
+      const prediction = await runMortgagePrediction(requestData);
+      return send(response, 200, prediction);
     }
     if (routePath === '/api/savings-coach') {
       if (!validateSavingsCoachInput(requestData)) return send(response, 400, { error: 'Savings goal analysis is missing or invalid.' });
