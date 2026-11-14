@@ -32,6 +32,15 @@ export default function RootLayout() {
             name="savings-goal"
             options={{ presentation: 'fullScreenModal', gestureEnabled: true }}
           />
+          <Stack.Screen
+            name="chat"
+            options={{
+              presentation: 'transparentModal',
+              animation: 'none',
+              gestureEnabled: false,
+              contentStyle: { backgroundColor: 'transparent' },
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </SQLiteProvider>

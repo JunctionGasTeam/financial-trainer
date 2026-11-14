@@ -241,14 +241,48 @@ async function runAgent(role, monthlyData, window, orchestrationPlan) {
   };
 }
 
+function validateChatMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 1 || messages.length > 20) return false;
+  const valid = messages.every((message) => message && (message.role === 'user' || message.role === 'assistant') &&
+    typeof message.text === 'string' && message.text.trim().length > 0 && message.text.length <= 1000);
+  return valid && messages[messages.length - 1].role === 'user';
+}
+
+async function runChat(messages, monthlyData, window) {
+  const transcript = messages
+    .map((message) => `${message.role === 'user' ? 'User' : 'Coach'}: ${message.text.trim()}`)
+    .join('\n');
+  const prompt = [
+    'You are a friendly personal finance coach inside a banking app, talking with the account owner about their own money.',
+    'Answer only from the supplied monthly EUR totals grouped by month and category. Never invent transactions, merchants, or numbers. If the data cannot answer the question, say so briefly.',
+    `The data covers ${window.startMonth} through ${window.endMonth}. Months with no data: ${window.missingMonths.join(', ') || 'none'}. Missing months are unknown, not zero.`,
+    'Reply in plain text without markdown, in at most 3 short sentences. Write amounts like €1,234.',
+    `Monthly data:\n${JSON.stringify(monthlyData)}`,
+    `Conversation so far:\n${transcript}\n\nCoach:`,
+  ].join('\n\n');
+
+  const text = await callHydrogen(prompt, { label: 'Chat coach', maxOutputTokens: 2048 });
+  return text.replace(/^Coach:\s*/i, '').slice(0, 2000);
+}
+
+function validateWindow(window, monthlyData) {
+  return Boolean(window && /^\d{4}-\d{2}$/.test(window.startMonth) && /^\d{4}-\d{2}$/.test(window.endMonth) &&
+    Array.isArray(window.requestedMonths) && window.requestedMonths.length === 12 &&
+    Array.isArray(window.availableMonths) && Array.isArray(window.missingMonths) &&
+    !window.availableMonths.some((month) => !window.requestedMonths.includes(month) || !Object.hasOwn(monthlyData, month)) &&
+    !window.missingMonths.some((month) => !window.requestedMonths.includes(month)));
+}
+
+const routes = new Set(['/api/analyze', '/api/chat', '/api/savings-coach']);
+
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') return send(response, 204, {});
   const routePath = new URL(request.url || '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
-  if (request.method !== 'POST' || !['/api/analyze', '/api/savings-coach'].includes(routePath)) return send(response, 404, { error: 'Not found.' });
+  if (request.method !== 'POST' || !routes.has(routePath)) return send(response, 404, { error: 'Not found.' });
   if (!process.env.GEMINI_API_KEY) return send(response, 503, { error: 'GEMINI_API_KEY is missing from the server environment.' });
 
   const ip = request.socket.remoteAddress || 'unknown';
-  if (!checkRateLimit(ip)) return send(response, 429, { error: 'Too many analysis requests. Try again in a minute.' });
+  if (!checkRateLimit(ip)) return send(response, 429, { error: 'Too many requests. Try again in a minute.' });
 
   try {
     let body = '';
@@ -268,13 +302,18 @@ const server = createServer(async (request, response) => {
       return send(response, 200, coach);
     }
 
-    const { monthlyData, window } = requestData;
+    const { monthlyData, window } = requestData ?? {};
+
+    if (routePath === '/api/chat') {
+      if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
+      if (!validateWindow(window, monthlyData)) return send(response, 400, { error: 'The 12-month data window is missing or invalid.' });
+      if (!validateChatMessages(requestData.messages)) return send(response, 400, { error: 'The chat messages are missing or invalid.' });
+      const reply = await runChat(requestData.messages, monthlyData, window);
+      return send(response, 200, { reply, model });
+    }
+
     if (!validateMonthlyData(monthlyData)) return send(response, 400, { error: 'Monthly transaction data is missing or invalid.' });
-    if (!window || !/^\d{4}-\d{2}$/.test(window.startMonth) || !/^\d{4}-\d{2}$/.test(window.endMonth) ||
-      !Array.isArray(window.requestedMonths) || window.requestedMonths.length !== 12 ||
-      !Array.isArray(window.availableMonths) || !Array.isArray(window.missingMonths) ||
-      window.availableMonths.some((month) => !window.requestedMonths.includes(month) || !Object.hasOwn(monthlyData, month)) ||
-      window.missingMonths.some((month) => !window.requestedMonths.includes(month))) {
+    if (!validateWindow(window, monthlyData)) {
       return send(response, 400, { error: 'The 12-month analysis window is missing or invalid.' });
     }
 
