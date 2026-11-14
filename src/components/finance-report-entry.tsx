@@ -111,7 +111,7 @@ export function FinanceReportEntry() {
             />
           </Pressable>
 
-          <Pressable
+          {/* <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open mortgage approval estimator"
             onPress={() => router.push('/mortgage-prediction' as Href)}
@@ -138,7 +138,7 @@ export function FinanceReportEntry() {
               tintColor={bankGreen}
               size={20}
             />
-          </Pressable>
+          </Pressable> */}
         </View>
 
         <View style={[styles.launcherDock, { paddingBottom: 10 + launcherBottom }]}>

@@ -194,6 +194,61 @@ async function runMortgagePrediction(input) {
   };
 }
 
+function validateSpendingClassificationInput(input) {
+  if (!input || !Array.isArray(input.transactions) || input.transactions.length > 500 ||
+    !Array.isArray(input.categoryHistory) || input.categoryHistory.length > 60) return false;
+  const transactionIds = new Set();
+  const transactionsValid = input.transactions.every((item) => {
+    if (!item || !Number.isSafeInteger(item.transactionId) || transactionIds.has(item.transactionId) ||
+      typeof item.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.date) ||
+      typeof item.category !== 'string' || !item.category || item.category.length > 80 ||
+      typeof item.transactionType !== 'string' || item.transactionType.length > 80 ||
+      (item.mccCode != null && (typeof item.mccCode !== 'string' || item.mccCode.length > 20)) ||
+      !Number.isFinite(item.amount) || item.amount <= 0 || !Number.isInteger(item.priorTransactionsAtMerchant) ||
+      item.priorTransactionsAtMerchant < 0) return false;
+    transactionIds.add(item.transactionId);
+    return true;
+  });
+  if (!transactionsValid || input.categoryHistory.some((item) => !item || typeof item.category !== 'string' ||
+    item.category.length > 80 || !Number.isInteger(item.transactionCount) || item.transactionCount < 0 ||
+    !Number.isInteger(item.monthsActive) || item.monthsActive < 0 || item.monthsActive > 12 ||
+    !Number.isFinite(item.totalAmount) || item.totalAmount < 0)) return false;
+  return true;
+}
+
+async function runSpendingClassification(input) {
+  if (input.transactions.length === 0) return { classifications: [] };
+  const text = await callHydrogen([
+    'Classify each supplied debit transaction for a personal spending diagram.',
+    'For every transaction, choose exactly one type: mandatory_regular (recurring essentials such as housing, utilities, essential groceries, or regular transport); mandatory_irregular (necessary but occasional costs such as essential repairs or unexpected health costs); everyday_flexible (optional day-to-day purchases such as coffee, dining, entertainment, or leisure). Use category, transaction type, merchant category code, amount, recent category history, and prior transactions at the same merchant. Do not use the amount alone to infer necessity. Do not map categories with a fixed lookup; assess each transaction using the supplied data. Every transaction must receive one type, including transfers, and never omit or invent an ID.',
+    'Return JSON only in this exact shape: {"classifications":[{"transactionId":123,"spendingType":"mandatory_regular|mandatory_irregular|everyday_flexible"}]}. Return one classification per transactionId and no other text.',
+    `Transactions from the selected month:\n${JSON.stringify(input.transactions)}`,
+    `Recent 12-month category history from SQLite:\n${JSON.stringify(input.categoryHistory)}`,
+  ].join('\n\n'), { json: true, label: 'Spending category classifier', maxOutputTokens: 4096, thinkingLevel: 'LOW' });
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Gemini returned incomplete spending classifications. Try again.');
+  }
+  const validTypes = ['mandatory_regular', 'mandatory_irregular', 'everyday_flexible'];
+  if (!parsed || !Array.isArray(parsed.classifications) || parsed.classifications.length !== input.transactions.length) {
+    throw new Error('Gemini did not classify every transaction. Try again.');
+  }
+  const classifiedIds = new Set();
+  const classifications = parsed.classifications.map((item) => {
+    if (!item || !Number.isSafeInteger(item.transactionId) || !validTypes.includes(item.spendingType) ||
+      classifiedIds.has(item.transactionId)) return null;
+    classifiedIds.add(item.transactionId);
+    return { transactionId: item.transactionId, spendingType: item.spendingType };
+  });
+  if (classifications.some((item) => item == null) ||
+    input.transactions.some((item) => !classifiedIds.has(item.transactionId))) {
+    throw new Error('Gemini returned invalid transaction classifications. Try again.');
+  }
+  return { classifications };
+}
+
 async function runSavingsCoach(input) {
   const safeInput = {
     goalAmount: Math.round(input.goalAmount),
@@ -435,7 +490,7 @@ function validateWindow(window, monthlyData) {
     !window.missingMonths.some((month) => !window.requestedMonths.includes(month)));
 }
 
-const routes = new Set(['/api/analyze', '/api/chat', '/api/savings-coach', '/api/mortgage-prediction']);
+const routes = new Set(['/api/analyze', '/api/chat', '/api/savings-coach', '/api/mortgage-prediction', '/api/classify-spending']);
 
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') return send(response, 204, {});
@@ -457,6 +512,11 @@ const server = createServer(async (request, response) => {
       requestData = JSON.parse(body);
     } catch {
       return send(response, 400, { error: 'The app sent an invalid request body. Restart Expo and try again.' });
+    }
+    if (routePath === '/api/classify-spending') {
+      if (!validateSpendingClassificationInput(requestData)) return send(response, 400, { error: 'Spending transactions are missing or invalid.' });
+      const classification = await runSpendingClassification(requestData);
+      return send(response, 200, classification);
     }
     if (routePath === '/api/mortgage-prediction') {
       if (!validateMortgagePredictionInput(requestData)) return send(response, 400, { error: 'Mortgage application inputs or historical cases are missing or invalid.' });
