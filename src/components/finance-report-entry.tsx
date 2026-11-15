@@ -27,7 +27,7 @@ export function FinanceReportEntry() {
             accessibilityRole="button"
             accessibilityLabel="Open spending and income overview"
             onPress={() => router.push('/spending-report' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, pressed && styles.pressed]}>
             <View style={styles.iconBadge}>
               <SymbolView
                 name={{ ios: 'chart.pie.fill', android: 'pie_chart', web: 'pie_chart' }}
@@ -40,7 +40,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Spending and income
               </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
+              <ThemedText type="small" themeColor="textSecondary">
                 View your category breakdown
               </ThemedText>
             </View>
@@ -56,7 +56,7 @@ export function FinanceReportEntry() {
             accessibilityRole="button"
             accessibilityLabel="Open anomaly detection"
             onPress={() => router.push('/anomaly-detection' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, pressed && styles.pressed]}>
             <View style={styles.iconBadge}>
               <SymbolView
                 name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
@@ -69,7 +69,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Anomaly detection
               </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
+              <ThemedText type="small" themeColor="textSecondary">
                 Review unusual monthly patterns
               </ThemedText>
             </View>
@@ -85,7 +85,7 @@ export function FinanceReportEntry() {
             accessibilityRole="button"
             accessibilityLabel="Open savings goal planner"
             onPress={() => router.push('/savings-goal' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, pressed && styles.pressed]}>
             <View style={styles.iconBadge}>
               <SymbolView
                 name={{ ios: 'target', android: 'track_changes', web: 'track_changes' }}
@@ -98,7 +98,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Savings goal
               </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
+              <ThemedText type="small" themeColor="textSecondary">
                 Build a plan from your spending habits
               </ThemedText>
             </View>
@@ -114,7 +114,7 @@ export function FinanceReportEntry() {
             accessibilityRole="button"
             accessibilityLabel="Open mortgage approval estimator"
             onPress={() => router.push('/mortgage-prediction' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, pressed && styles.pressed]}>
             <View style={styles.iconBadge}>
               <SymbolView
                 name={{ ios: 'house.fill', android: 'home', web: 'home' }}
@@ -127,7 +127,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Mortgage estimate
               </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
+              <ThemedText type="small" themeColor="textSecondary">
                 Estimate approval from historical cases
               </ThemedText>
             </View>
@@ -184,9 +184,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 14,
   },
-  buttonDescription: {
-    color: '#ffffff',
-  },
   financeButton: {
     minHeight: 96,
     flexDirection: 'row',
@@ -195,6 +192,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 18,
     borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#DCE6DF',
   },
   iconBadge: {
     width: 48,

@@ -57,7 +57,8 @@ const TabButton = forwardRef<
 });
 
 function CustomTabList(props: TabListProps) {
-  return <View {...props} style={styles.tabBar} />;
+  const theme = useTheme();
+  return <View {...props} style={[styles.tabBar, { backgroundColor: theme.backgroundElement, borderTopColor: theme.border }]} />;
 }
 
 const styles = StyleSheet.create({
