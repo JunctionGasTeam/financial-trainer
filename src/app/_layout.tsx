@@ -6,6 +6,7 @@ import { useColorScheme } from 'react-native';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { wipeScreenOptions } from '@/components/ui/wipe-screen';
 import { verifyTransactionsDatabase } from '@/data/transactions';
+import { BasketsProvider } from '@/hooks/use-baskets';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -17,6 +18,7 @@ export default function RootLayout() {
       databaseName="customer-transactions.db"
       assetSource={{ assetId: require('../../assets/data/customer-transactions.db'), forceOverwrite: true }}
       onInit={verifyTransactionsDatabase}>
+      <BasketsProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AnimatedSplashOverlay />
         <Stack screenOptions={{ headerShown: false }}>
@@ -29,6 +31,7 @@ export default function RootLayout() {
           <Stack.Screen name="chat" options={wipeScreenOptions} />
         </Stack>
       </ThemeProvider>
+      </BasketsProvider>
     </SQLiteProvider>
   );
 }

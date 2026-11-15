@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { SymbolView } from 'expo-symbols';
 import { useSQLiteContext } from 'expo-sqlite';
 import {
@@ -19,15 +19,17 @@ import { Circle, Path, Svg } from 'react-native-svg';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { BasketMoveSheet, type BasketRow } from '@/components/basket-move-sheet';
 import {
-  getSpendingClassificationData,
   getMonthlyTransactionSummary,
   getTransactionMonthRange,
   type MonthlyTransactionSummary,
   type MonthlyCategory,
   type TransactionMonthRange,
 } from '@/data/transactions';
-import { classifySpendingTransactions, type SpendingType } from '@/features/spending/api';
+import type { Classifier } from '@/features/baskets/classifier';
+import { basketLabels, type Basket } from '@/features/baskets/rules';
+import { useBaskets } from '@/hooks/use-baskets';
 import { useTheme } from '@/hooks/use-theme';
 import { CloseButton, closeButtonSize } from '@/components/ui/close-button';
 
@@ -38,7 +40,7 @@ const emptySummary: MonthlyTransactionSummary = {
 };
 
 type PageIndex = 0 | 1;
-type DiagramCategory = MonthlyCategory & { details?: MonthlyCategory[] };
+type DiagramCategory = MonthlyCategory & { details?: MonthlyCategory[]; basket?: Basket; movedCount?: number };
 
 export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const db = useSQLiteContext();
@@ -48,7 +50,8 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [loadedMonth, setLoadedMonth] = useState('');
   const [monthSummary, setMonthSummary] = useState(emptySummary);
-  const [spendingGroups, setSpendingGroups] = useState<DiagramCategory[]>([]);
+  const { transactions, classifier, overrides, reset } = useBaskets();
+  const [openBasket, setOpenBasket] = useState<Basket | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState('');
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
@@ -62,10 +65,20 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
   const monthLabel = selectedMonth ? formatMonth(selectedMonth) : 'Loading months…';
   const monthMenuHeight = Math.min(280, monthOptions.length * 44);
   const monthMenuTop = safeAreaInsets.top + 72 + 10 + 46 + 6;
-  const loadingSummary = !loadError && (!selectedMonth || loadedMonth !== selectedMonth);
+  const loadingSummary = !loadError && (!selectedMonth || loadedMonth !== selectedMonth || !classifier);
+  // Baskets come from the shared rules plus the user's moves, so they match every other screen.
+  const monthRows = useMemo(
+    () => (classifier ? basketRowsForMonth(transactions, classifier, selectedMonth) : []),
+    [transactions, classifier, selectedMonth],
+  );
+  const spendingGroups = useMemo(() => buildSpendingGroups(monthRows), [monthRows]);
+  const movedToSavings = useMemo(
+    () => (classifier ? transfersForMonth(transactions, classifier, selectedMonth) : 0),
+    [transactions, classifier, selectedMonth],
+  );
   const pages = [
     {
-      key: 'spending', label: 'Spending', listHeading: 'Spending by type', centerLabel: 'SPENT',
+      key: 'spending', label: 'Spending', listHeading: 'Your three baskets', centerLabel: 'SPENT',
       total: spendingGroups.reduce((sum, group) => sum + group.amount, 0), categories: spendingGroups,
     },
     {
@@ -97,21 +110,13 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
     let active = true;
     async function loadSelectedMonth() {
       try {
-        const [summary, classificationData] = await Promise.all([
-          getMonthlyTransactionSummary(db, selectedMonth),
-          getSpendingClassificationData(db, selectedMonth),
-        ]);
-        const classifications = classificationData.transactions.length > 0
-          ? await classifySpendingTransactions(classificationData.transactions, classificationData.categoryHistory)
-          : [];
-        const groups = buildSpendingGroups(classificationData.transactions, classifications);
+        const summary = await getMonthlyTransactionSummary(db, selectedMonth);
         if (!active) return;
         setMonthSummary(summary);
-        setSpendingGroups(groups);
         setLoadedMonth(selectedMonth);
         setLoadError('');
       } catch (cause) {
-        if (active) setLoadError(cause instanceof Error ? cause.message : 'Could not load and classify this month.');
+        if (active) setLoadError(cause instanceof Error ? cause.message : 'Could not load this month.');
       }
     }
     void loadSelectedMonth();
@@ -176,7 +181,7 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
         {loadingSummary ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={bankGreen} />
-            <ThemedText type="small" themeColor="textSecondary">{loadError || 'Loading transactions and classifying spending with Gemini…'}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">{loadError || 'Loading transactions…'}</ThemedText>
           </View>
         ) : loadError ? (
           <View style={styles.loadingState}>
@@ -212,12 +217,27 @@ export function SpendingBreakdown({ onClose }: { onClose: () => void }) {
                   total={page.total}
                   categories={page.categories}
                   monthLabel={monthLabel}
+                  onOpenBasket={page.key === 'spending' ? setOpenBasket : undefined}
+                  footer={page.key === 'spending' ? (
+                    <SpendingFooter
+                      movedToSavings={movedToSavings}
+                      moveCount={overrides.length}
+                      onReset={reset}
+                    />
+                  ) : null}
                 />
               </View>
             ))}
           </ScrollView>
         )}
       </SafeAreaView>
+
+      <BasketMoveSheet
+        basket={openBasket}
+        monthLabel={monthLabel}
+        rows={monthRows.filter((row) => row.decision.bucket === openBasket)}
+        onClose={() => setOpenBasket(null)}
+      />
 
       <Modal
         visible={monthMenuOpen}
@@ -276,6 +296,8 @@ function CategoryPage({
   total,
   categories,
   monthLabel,
+  onOpenBasket,
+  footer,
 }: {
   width: number;
   label: string;
@@ -284,6 +306,8 @@ function CategoryPage({
   total: number;
   categories: readonly DiagramCategory[];
   monthLabel: string;
+  onOpenBasket?: (basket: Basket) => void;
+  footer?: ReactNode;
 }) {
   const theme = useTheme();
   const chartSize = Math.min(width - 48, 252);
@@ -335,7 +359,7 @@ function CategoryPage({
           {listHeading}
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {label === 'Spending' ? '3 spending types' : `${categories.length} ${categories.length === 1 ? 'category' : 'categories'}`}
+          {label === 'Spending' ? 'Tap one to move things' : `${categories.length} ${categories.length === 1 ? 'category' : 'categories'}`}
         </ThemedText>
       </View>
 
@@ -346,14 +370,30 @@ function CategoryPage({
           </ThemedText>
         ) : (
           categories.map((category, index) => (
-            <View key={category.category}>
+            <Pressable
+              key={category.category}
+              disabled={!onOpenBasket || !category.basket}
+              accessibilityRole={onOpenBasket && category.basket ? 'button' : undefined}
+              accessibilityHint={onOpenBasket && category.basket ? 'Shows the purchases and lets you move them to another basket' : undefined}
+              onPress={() => category.basket && onOpenBasket?.(category.basket)}
+              style={({ pressed }) => pressed && styles.pressed}>
               {index > 0 && <View style={[styles.separator, { backgroundColor: theme.backgroundSelected }]} />}
               <View style={styles.categoryRow}>
                 <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
                 <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
+                {category.movedCount ? (
+                  <Text style={styles.movedBadge}>{category.movedCount} moved</Text>
+                ) : null}
                 <ThemedText type="smallBold" style={styles.categoryAmount}>
                   {formatEuro(category.amount)}
                 </ThemedText>
+                {onOpenBasket && category.basket ? (
+                  <SymbolView
+                    name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+                    tintColor={theme.textSecondary}
+                    size={16}
+                  />
+                ) : null}
               </View>
               {category.details ? (
                 <ThemedText type="small" themeColor="textSecondary" style={styles.categoryDetails}>
@@ -362,58 +402,84 @@ function CategoryPage({
                     : 'No transactions recorded in this type.'}
                 </ThemedText>
               ) : null}
-            </View>
+            </Pressable>
           ))
         )}
       </ThemedView>
+      {footer}
     </ScrollView>
   );
 }
 
-const spendingTypeDefinitions: { type: SpendingType; category: string; color: string }[] = [
-    {
-      type: 'mandatory_regular',
-      category: 'Mandatory & regular',
-      color: '#008044',
-    },
-    {
-      type: 'mandatory_irregular',
-      category: 'Mandatory & irregular',
-      color: '#5c8db0',
-    },
-    {
-      type: 'everyday_flexible',
-      category: 'Everyday spending that slips through your fingers',
-      color: '#d5a338',
-    },
-  ];
+const basketColors: Record<Basket, string> = {
+  regular: '#008044',
+  irregular: '#5c8db0',
+  everyday: '#d5a338',
+};
 
-function buildSpendingGroups(
-  transactions: { transactionId: number; category: string; amount: number }[],
-  classifications: { transactionId: number; spendingType: SpendingType }[],
-): DiagramCategory[] {
-  const classificationById = new Map(classifications.map((item) => [item.transactionId, item.spendingType]));
-  const detailsByType = new Map<SpendingType, Map<string, number>>();
-  for (const definition of spendingTypeDefinitions) detailsByType.set(definition.type, new Map());
+/** Plain-language line under each basket name: the challenge's three kinds of spending. */
+const basketHints: Record<Basket, string> = {
+  regular: 'Mandatory and regular',
+  irregular: 'Mandatory but irregular',
+  everyday: 'Everyday spending that slips through your fingers',
+};
 
-  for (const transaction of transactions) {
-    const spendingType = classificationById.get(transaction.transactionId);
-    if (!spendingType) throw new Error('Gemini did not classify every spending transaction.');
-    const details = detailsByType.get(spendingType);
-    if (!details) throw new Error('Gemini returned an unsupported spending type.');
-    details.set(transaction.category, (details.get(transaction.category) ?? 0) + transaction.amount);
-  }
+function basketRowsForMonth(transactions: BasketRow['tx'][], classifier: Classifier, month: string): BasketRow[] {
+  if (!month) return [];
+  return transactions
+    .filter((tx) => tx.amount < 0 && tx.date.startsWith(month))
+    .map((tx) => ({ tx, decision: classifier.decide(tx) }))
+    .filter((row) => row.decision.bucket in basketLabels)
+    .reverse();
+}
 
-  return spendingTypeDefinitions.map((definition) => {
-    const details = [...(detailsByType.get(definition.type) ?? new Map())]
-      .map(([category, amount]) => ({ category, amount, color: definition.color }));
+function transfersForMonth(transactions: BasketRow['tx'][], classifier: Classifier, month: string) {
+  return transactions
+    .filter((tx) => tx.amount < 0 && tx.date.startsWith(month) && classifier.bucketOf(tx) === 'transfer')
+    .reduce((sum, tx) => sum - tx.amount, 0);
+}
+
+function buildSpendingGroups(rows: BasketRow[]): DiagramCategory[] {
+  return (['regular', 'irregular', 'everyday'] as const).map((basket) => {
+    const inBasket = rows.filter((row) => row.decision.bucket === basket);
+    const byCategory = new Map<string, number>();
+    for (const { tx } of inBasket) byCategory.set(tx.category, (byCategory.get(tx.category) ?? 0) - tx.amount);
+    const details = [...byCategory]
+      .map(([category, amount]) => ({ category, amount, color: basketColors[basket] }))
+      .sort((a, b) => b.amount - a.amount);
     return {
-      category: definition.category,
-      color: definition.color,
+      category: `${basketLabels[basket]} · ${basketHints[basket]}`,
+      color: basketColors[basket],
       amount: details.reduce((sum, item) => sum + item.amount, 0),
       details,
+      basket,
+      movedCount: inBasket.filter((row) => row.decision.movedBy).length,
     };
   });
+}
+
+function SpendingFooter({ movedToSavings, moveCount, onReset }: { movedToSavings: number; moveCount: number; onReset: () => void }) {
+  if (movedToSavings <= 0 && moveCount === 0) return null;
+  return (
+    <View style={styles.footer}>
+      {movedToSavings > 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          {formatEuro(movedToSavings)} moved to savings and investments is not counted as spending.
+        </ThemedText>
+      ) : null}
+      {moveCount > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Reset basket changes to the defaults"
+          onPress={onReset}
+          style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}>
+          <ThemedText type="smallBold" style={styles.retryText}>
+            Reset my basket changes ({moveCount})
+          </ThemedText>
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
 function sectorPath(startAngle: number, endAngle: number) {
@@ -642,6 +708,22 @@ const styles = StyleSheet.create({
   },
   categoryAmount: {
     fontVariant: ['tabular-nums'],
+  },
+  footer: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+  },
+  movedBadge: {
+    color: bankGreen,
+    fontSize: 11,
+    fontWeight: '600',
+    backgroundColor: '#e2f3e8',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    overflow: 'hidden',
   },
   retryButton: { marginTop: 6, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 12, backgroundColor: '#e2f3e8' },
   retryText: { color: bankGreen },

@@ -1,26 +1,15 @@
-import { useEffect, useState } from 'react';
-import { useSQLiteContext } from 'expo-sqlite';
+import { useMemo } from 'react';
 
-import { CUSTOMER_ID, getAsOfDate, getCustomerTransactions } from '@/data/transactions';
-import { computeSafeToSpend, type SafeToSpend } from '@/features/safe-to-spend/calc';
+import { computeSafeToSpend } from '@/features/safe-to-spend/calc';
+import { useBaskets } from '@/hooks/use-baskets';
 
-export function useSafeToSpend(customerId = CUSTOMER_ID) {
-  const db = useSQLiteContext();
-  const [result, setResult] = useState<SafeToSpend | null>(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const [asOf, transactions] = await Promise.all([getAsOfDate(db), getCustomerTransactions(db, customerId)]);
-      const computed = asOf ? computeSafeToSpend(transactions, asOf) : null;
-      if (!computed) throw new Error('No transactions are available for this customer.');
-      if (active) setResult(computed);
-    })().catch((caught) => {
-      if (active) setError(caught instanceof Error ? caught.message : 'Could not work out safe to spend.');
-    });
-    return () => { active = false; };
-  }, [db, customerId]);
-
-  return { result, error };
+/** Safe-to-spend for the current customer, recomputed when they move something between baskets. */
+export function useSafeToSpend() {
+  const { transactions, asOf, classifier, error: loadError } = useBaskets();
+  return useMemo(() => {
+    if (loadError) return { result: null, error: loadError };
+    if (!asOf || !classifier) return { result: null, error: '' };
+    const result = computeSafeToSpend(transactions, asOf, { bucketOf: classifier.bucketOf });
+    return { result, error: result ? '' : 'No transactions are available for this customer.' };
+  }, [transactions, asOf, classifier, loadError]);
 }

@@ -2,7 +2,7 @@
  * Safe-to-spend, docs/SPEC.md sections 6.1 to 6.3. Pure function over one
  * customer's transactions so it can be checked against the spec's worked example.
  */
-import { classify, isRegularPharmacyBuyer, type Transaction } from '@/features/baskets/rules';
+import { classify, isRegularPharmacyBuyer, type Bucket, type Transaction } from '@/features/baskets/rules';
 
 export type SafeToSpendLine = {
   key: 'balance' | 'housing' | 'utilities' | 'groceries' | 'buffer' | 'savings';
@@ -47,7 +47,7 @@ const DAY_MS = 86_400_000;
 export function computeSafeToSpend(
   allTransactions: Transaction[],
   asOf: string,
-  options: { savingsTarget?: number } = {},
+  options: { savingsTarget?: number; bucketOf?: (tx: Transaction) => Bucket } = {},
 ): SafeToSpend | null {
   const transactions = allTransactions.filter((tx) => tx.date <= asOf);
   if (transactions.length === 0) return null;
@@ -55,6 +55,8 @@ export function computeSafeToSpend(
   const asOfMonth = asOf.slice(0, 7);
   const referenceMonths = Array.from({ length: 6 }, (_, index) => addMonths(asOfMonth, index - 6));
   const context = { regularPharmacyBuyer: isRegularPharmacyBuyer(transactions, referenceMonths) };
+  // The caller passes the shared classifier so the user's basket moves count here too.
+  const bucketOf = options.bucketOf ?? ((tx: Transaction) => classify(tx, context));
   const debits = transactions.filter((tx) => tx.amount < 0);
   const usualMonthly = (match: (tx: Transaction) => boolean) => median(
     referenceMonths.map((month) => sum(debits.filter((tx) => tx.date.startsWith(month) && match(tx)).map((tx) => -tx.amount))),
@@ -85,9 +87,9 @@ export function computeSafeToSpend(
   // Running costs and buffer.
   const utilitiesMonthly = usualMonthly((tx) => tx.category === 'Utilities');
   const essentialsMonthly = usualMonthly((tx) =>
-    (tx.category === 'Groceries' || tx.category === 'Transportation') && classify(tx, context) === 'regular');
+    (tx.category === 'Groceries' || tx.category === 'Transportation') && bucketOf(tx) === 'regular');
   const historyMonths = monthsBetween(transactions[0].date.slice(0, 7), asOfMonth);
-  const irregularTotal = sum(debits.filter((tx) => classify(tx, context) === 'irregular')
+  const irregularTotal = sum(debits.filter((tx) => bucketOf(tx) === 'irregular')
     .map((tx) => Math.min(-tx.amount, BUFFER_CAP_EUR)));
   const irregularMonthly = irregularTotal / historyMonths;
 
@@ -99,7 +101,7 @@ export function computeSafeToSpend(
     .map((tx) => -tx.amount));
   const savingsReserve = Math.max(0, savingsTarget - depositedSinceSalary);
 
-  const usualWeeklyEveryday = usualMonthly((tx) => classify(tx, context) === 'everyday') * 7 / 30;
+  const usualWeeklyEveryday = usualMonthly((tx) => bucketOf(tx) === 'everyday') * 7 / 30;
 
   const build = (paydayDate: string) => {
     const days = Math.max(1, daysBetween(asOf, paydayDate));

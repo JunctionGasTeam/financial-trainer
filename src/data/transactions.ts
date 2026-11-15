@@ -18,22 +18,6 @@ export type RecentTransactionData = {
 };
 export type TransactionMonthRange = { firstMonth: string; lastMonth: string };
 export type SalaryIncomeEstimate = { averageMonthlyIncome: number; monthsWithSalary: number };
-export type SpendingTransactionForClassification = {
-  transactionId: number;
-  date: string;
-  category: string;
-  transactionType: string;
-  mccCode: string | null;
-  amount: number;
-  priorTransactionsAtMerchant: number;
-};
-export type SpendingCategoryHistory = {
-  category: string;
-  transactionCount: number;
-  monthsActive: number;
-  totalAmount: number;
-};
-
 type AggregateRow = {
   month: string;
   category: string;
@@ -97,58 +81,6 @@ export async function getMonthlyTransactionSummary(
 ): Promise<MonthlyTransactionSummary> {
   const monthlyData = await getTransactionSummariesBetween(db, month, month, customerId);
   return monthlyData[month] ?? emptyMonthlySummary();
-}
-
-export async function getSpendingClassificationData(
-  db: SQLiteDatabase,
-  month: string,
-  customerId = CUSTOMER_ID,
-): Promise<{ transactions: SpendingTransactionForClassification[]; categoryHistory: SpendingCategoryHistory[] }> {
-  const [year, monthNumber] = month.split('-').map(Number);
-  const historyStart = new Date(year, monthNumber - 12, 1);
-  const historyStartMonth = `${historyStart.getFullYear()}-${String(historyStart.getMonth() + 1).padStart(2, '0')}`;
-  const nextMonth = nextMonthKey(month);
-  const transactions = await db.getAllAsync<SpendingTransactionForClassification>(
-    `SELECT current.rowid AS transactionId,
-            current.tx_date AS date,
-            current.category,
-            current.transaction_type AS transactionType,
-            current.mcc_code AS mccCode,
-            ROUND(ABS(current.tx_amount_eur), 2) AS amount,
-            (SELECT COUNT(*) FROM transactions AS previous
-             WHERE previous.customer_id = current.customer_id
-               AND previous.merchant_id = current.merchant_id
-               AND previous.tx_date >= ?
-               AND previous.tx_date < current.tx_date
-               AND previous.tx_amount_eur < 0) AS priorTransactionsAtMerchant
-     FROM transactions AS current
-     WHERE current.customer_id = ?
-       AND current.tx_date >= ?
-       AND current.tx_date < ?
-       AND current.tx_amount_eur < 0
-     ORDER BY current.tx_timestamp`,
-    `${historyStartMonth}-01`,
-    customerId,
-    `${month}-01`,
-    `${nextMonth}-01`,
-  );
-  const categoryHistory = await db.getAllAsync<SpendingCategoryHistory>(
-    `SELECT category,
-            COUNT(*) AS transactionCount,
-            COUNT(DISTINCT substr(tx_date, 1, 7)) AS monthsActive,
-            ROUND(SUM(ABS(tx_amount_eur)), 2) AS totalAmount
-     FROM transactions
-     WHERE customer_id = ?
-       AND tx_date >= ?
-       AND tx_date < ?
-       AND tx_amount_eur < 0
-     GROUP BY category
-     ORDER BY totalAmount DESC`,
-    customerId,
-    `${historyStartMonth}-01`,
-    `${nextMonth}-01`,
-  );
-  return { transactions, categoryHistory };
 }
 
 export async function getRecentTransactionData(
@@ -259,6 +191,7 @@ function nextMonthKey(monthKey: string) {
 }
 
 export type CustomerTransaction = {
+  id: number;
   date: string;
   category: string;
   amount: number;
@@ -272,7 +205,8 @@ export async function getCustomerTransactions(
   customerId = CUSTOMER_ID,
 ): Promise<CustomerTransaction[]> {
   return db.getAllAsync<CustomerTransaction>(
-    `SELECT tx_date AS date,
+    `SELECT rowid AS id,
+            tx_date AS date,
             category,
             tx_amount_eur AS amount,
             balance_after_eur AS balanceAfter,

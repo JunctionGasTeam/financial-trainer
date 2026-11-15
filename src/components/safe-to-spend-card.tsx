@@ -41,8 +41,8 @@ const cardPalettes: Record<SafeToSpendPeriod, CardPalette> = {
 const otherPeriod = (period: SafeToSpendPeriod): SafeToSpendPeriod => (period === 'day' ? 'month' : 'day');
 
 /** Home card: full-width stack of Day / Month cards that shuffle when the top-right toggle is tapped. */
-export function SafeToSpendCard({ customerId }: { customerId?: string }) {
-  const { result, error } = useSafeToSpend(customerId);
+export function SafeToSpendCard() {
+  const { result, error } = useSafeToSpend();
   const [period, setPeriod] = useState<SafeToSpendPeriod>('day');
   const reduceMotion = useReducedMotion();
   // 0 = day card in front, 1 = month card in front.

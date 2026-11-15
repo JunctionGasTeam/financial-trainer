@@ -7,6 +7,8 @@ export type Basket = 'regular' | 'irregular' | 'everyday';
 export type Bucket = Basket | 'income' | 'transfer';
 
 export type Transaction = {
+  /** Row id in the transactions table; used for per-transaction basket overrides. */
+  id?: number;
   date: string; // YYYY-MM-DD
   category: string;
   amount: number; // signed EUR, negative = money out

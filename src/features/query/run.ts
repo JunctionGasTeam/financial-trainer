@@ -2,7 +2,8 @@
  * Runs a validated query form over one customer's transactions. Pure code: every figure the
  * coach states after a lookup comes from here, not from the language model.
  */
-import { basketLabels, classify, isRegularPharmacyBuyer, type Basket, type Bucket, type Transaction } from '@/features/baskets/rules';
+import { createClassifier } from '@/features/baskets/classifier';
+import { basketLabels, type Basket, type Bucket, type Transaction } from '@/features/baskets/rules';
 import type { QueryForm } from '@/features/query/form';
 import { merchantLabel, merchantTypeForMcc, merchantTypes } from '@/features/query/merchant-types';
 import { addMonths, formatDate } from '@/features/safe-to-spend/calc';
@@ -52,12 +53,14 @@ const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const transferCategories = new Set(['Invest Deposit', 'Invest Withdraw', 'Salary Sweep']);
 
-export function runQuery(allTransactions: Transaction[], form: QueryForm, asOf: string): QueryResult {
+/** `bucketOf` is the shared classifier, so the user's basket moves count in every answer. */
+export function runQuery(
+  allTransactions: Transaction[],
+  form: QueryForm,
+  asOf: string,
+  bucketOf: (tx: Transaction) => Bucket = createClassifier(allTransactions, asOf, []).bucketOf,
+): QueryResult {
   const transactions = allTransactions.filter((tx) => tx.date <= asOf);
-  const asOfMonth = asOf.slice(0, 7);
-  const referenceMonths = Array.from({ length: 6 }, (_, index) => addMonths(asOfMonth, index - 6));
-  const context = { regularPharmacyBuyer: isRegularPharmacyBuyer(transactions, referenceMonths) };
-  const bucketOf = (tx: Transaction): Bucket => classify(tx, context);
 
   const range = resolvePeriod(form, asOf, transactions[0]?.date ?? asOf);
   const matches = (tx: Transaction) => matchesFilters(tx, form, bucketOf(tx));
