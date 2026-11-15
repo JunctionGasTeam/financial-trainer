@@ -3,6 +3,7 @@ import { router, type Href } from 'expo-router';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FinanceBento } from '@/components/finance-bento';
 import { SafeToSpendCard } from '@/components/safe-to-spend-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -23,92 +24,7 @@ export function FinanceReportEntry() {
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
           <SafeToSpendCard />
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open spending and income overview"
-            onPress={() => router.push('/spending-report' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
-            <View style={styles.iconBadge}>
-              <SymbolView
-                name={{ ios: 'chart.pie.fill', android: 'pie_chart', web: 'pie_chart' }}
-                tintColor={bankGreen}
-                size={26}
-              />
-            </View>
-
-            <View style={styles.buttonCopy}>
-              <ThemedText type="smallBold" style={styles.buttonTitle}>
-                Spending and income
-              </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
-                View your category breakdown
-              </ThemedText>
-            </View>
-
-            <SymbolView
-              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
-              tintColor={bankGreen}
-              size={20}
-            />
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open anomaly detection"
-            onPress={() => router.push('/anomaly-detection' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
-            <View style={styles.iconBadge}>
-              <SymbolView
-                name={{ ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' }}
-                tintColor={bankGreen}
-                size={26}
-              />
-            </View>
-
-            <View style={styles.buttonCopy}>
-              <ThemedText type="smallBold" style={styles.buttonTitle}>
-                Anomaly detection
-              </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
-                Review unusual monthly patterns
-              </ThemedText>
-            </View>
-
-            <SymbolView
-              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
-              tintColor={bankGreen}
-              size={20}
-            />
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open savings goal planner"
-            onPress={() => router.push('/savings-goal' as Href)}
-            style={({ pressed }) => [styles.financeButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}>
-            <View style={styles.iconBadge}>
-              <SymbolView
-                name={{ ios: 'target', android: 'track_changes', web: 'track_changes' }}
-                tintColor={bankGreen}
-                size={26}
-              />
-            </View>
-
-            <View style={styles.buttonCopy}>
-              <ThemedText type="smallBold" style={styles.buttonTitle}>
-                Savings goal
-              </ThemedText>
-              <ThemedText type="small" style={styles.buttonDescription}>
-                Build a plan from your spending habits
-              </ThemedText>
-            </View>
-
-            <SymbolView
-              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
-              tintColor={bankGreen}
-              size={20}
-            />
-          </Pressable>
+          <FinanceBento />
 
           {/* <Pressable
             accessibilityRole="button"
@@ -183,33 +99,6 @@ const styles = StyleSheet.create({
     paddingTop: 28,
     paddingBottom: 16,
     gap: 14,
-  },
-  buttonDescription: {
-    color: '#ffffff',
-  },
-  financeButton: {
-    minHeight: 96,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 18,
-    borderRadius: 18,
-  },
-  iconBadge: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 24,
-    backgroundColor: '#e2f3e8',
-  },
-  buttonCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  buttonTitle: {
-    color: bankGreen,
   },
   launcherDock: {
     paddingHorizontal: 16,
