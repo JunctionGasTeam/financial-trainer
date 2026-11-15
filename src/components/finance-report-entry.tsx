@@ -23,10 +23,6 @@ export function FinanceReportEntry() {
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
           <SafeToSpendCard />
 
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.eyebrow}>
-            YOUR FINANCES
-          </ThemedText>
-
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open spending and income overview"
@@ -44,7 +40,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Spending and income
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="small" style={styles.buttonDescription}>
                 View your category breakdown
               </ThemedText>
             </View>
@@ -73,7 +69,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Anomaly detection
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="small" style={styles.buttonDescription}>
                 Review unusual monthly patterns
               </ThemedText>
             </View>
@@ -102,7 +98,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Savings goal
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="small" style={styles.buttonDescription}>
                 Build a plan from your spending habits
               </ThemedText>
             </View>
@@ -131,7 +127,7 @@ export function FinanceReportEntry() {
               <ThemedText type="smallBold" style={styles.buttonTitle}>
                 Mortgage estimate
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="small" style={styles.buttonDescription}>
                 Estimate approval from historical cases
               </ThemedText>
             </View>
@@ -188,9 +184,8 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 14,
   },
-  eyebrow: {
-    letterSpacing: 1,
-    paddingHorizontal: 4,
+  buttonDescription: {
+    color: '#ffffff',
   },
   financeButton: {
     minHeight: 96,
