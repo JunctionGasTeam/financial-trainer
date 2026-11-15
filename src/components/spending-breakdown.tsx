@@ -321,37 +321,41 @@ function CategoryPage({
         Total for {monthLabel}
       </ThemedText>
 
+      <View style={styles.chartHeader}>
+        <Text style={[styles.chartLabel, { color: theme.textSecondary }]}>{centerLabel}</Text>
+        <Text adjustsFontSizeToFit numberOfLines={1} style={[styles.chartTotal, { color: theme.text }]}>
+          {formatEuro(total)}
+        </Text>
+      </View>
+
       <View style={[styles.chartWrap, { width: chartSize, height: chartSize }]}>
         <Svg width={chartSize} height={chartSize} viewBox="0 0 220 220">
           {visibleCategories.length === 0 ? (
-            <Circle cx={110} cy={110} r={102} fill={theme.backgroundElement} />
+            <Circle cx={PIE_CENTER} cy={PIE_CENTER} r={PIE_RADIUS} fill={theme.backgroundElement} />
           ) : visibleCategories.length === 1 ? (
-            <Circle cx={110} cy={110} r={102} fill={visibleCategories[0].color} />
+            <Circle cx={PIE_CENTER} cy={PIE_CENTER} r={PIE_RADIUS} fill={visibleCategories[0].color} />
           ) : (
             visibleCategories.map((category, index) => {
               const startAngle = -90 + (visibleCategories
                 .slice(0, index)
                 .reduce((sum, item) => sum + item.amount, 0) / total) * 360;
               const endAngle = startAngle + (category.amount / total) * 360;
-              return (
+              const slice = roundedSlice(startAngle, endAngle);
+              return slice.kind === 'path' ? (
                 <Path
                   key={category.category}
-                  d={sectorPath(startAngle, endAngle)}
+                  d={slice.d}
                   fill={category.color}
-                  stroke={theme.background}
-                  strokeWidth={1.5}
+                  stroke={category.color}
+                  strokeWidth={SLICE_ROUND * 2}
+                  strokeLinejoin="round"
                 />
+              ) : (
+                <Circle key={category.category} cx={slice.x} cy={slice.y} r={slice.r} fill={category.color} />
               );
             })
           )}
-          <Circle cx={110} cy={110} r={67} fill={theme.background} />
         </Svg>
-        <View pointerEvents="none" style={styles.chartCenter}>
-          <Text style={[styles.chartLabel, { color: theme.textSecondary }]}>{centerLabel}</Text>
-          <Text adjustsFontSizeToFit numberOfLines={1} style={[styles.chartTotal, { color: theme.text }]}>
-            {formatEuro(total)}
-          </Text>
-        </View>
       </View>
 
       <View style={styles.listHeading}>
@@ -383,6 +387,11 @@ function CategoryPage({
                 <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
                 {category.movedCount ? (
                   <Text style={styles.movedBadge}>{category.movedCount} moved</Text>
+                ) : null}
+                {total > 0 ? (
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.categoryAmount}>
+                    {formatPercent(category.amount / total)}
+                  </ThemedText>
                 ) : null}
                 <ThemedText type="smallBold" style={styles.categoryAmount}>
                   {formatEuro(category.amount)}
@@ -482,14 +491,63 @@ function SpendingFooter({ movedToSavings, moveCount, onReset }: { movedToSavings
   );
 }
 
-function sectorPath(startAngle: number, endAngle: number) {
-  const center = 110;
-  const radius = 102;
-  const start = polarPoint(center, radius, startAngle);
-  const end = polarPoint(center, radius, endAngle);
-  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+const PIE_CENTER = 110;
+const PIE_RADIUS = 102;
+/** Clear space between neighbouring slices, in viewBox units. */
+const SLICE_GAP = 6;
+/** Corner radius of every slice; drawn as a round-joined stroke of this half-width. */
+const SLICE_ROUND = 8;
 
-  return `M ${center} ${center} L ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+type Slice =
+  | { kind: 'path'; d: string }
+  | { kind: 'dot'; x: number; y: number; r: number };
+
+/**
+ * A pie wedge with a gap to its neighbours and rounded corners. The wedge is
+ * inset by gap/2 + corner radius on each straight edge and by the corner radius
+ * on the arc; the caller strokes it with width 2 × SLICE_ROUND and round joins,
+ * which grows it back out with rounded corners while keeping the gap clear.
+ */
+function roundedSlice(startAngle: number, endAngle: number): Slice {
+  const sweep = endAngle - startAngle;
+  const mid = (startAngle + endAngle) / 2;
+  const offset = SLICE_GAP / 2 + SLICE_ROUND;
+  const outer = PIE_RADIUS - SLICE_ROUND;
+  const edgeShift = (Math.asin(offset / outer) * 180) / Math.PI;
+  const start = polarPoint(PIE_CENTER, outer, startAngle + edgeShift);
+  const end = polarPoint(PIE_CENTER, outer, endAngle - edgeShift);
+  const largeArc = sweep - 2 * edgeShift > 180 ? 1 : 0;
+
+  if (sweep > 180) {
+    // Reflex wedge: the inset edges never meet, so the inner corner is a small
+    // arc around the centre that keeps the gap clear on the other slices' side.
+    const nearStart = polarPoint(PIE_CENTER, offset, startAngle + 90);
+    const nearEnd = polarPoint(PIE_CENTER, offset, endAngle - 90);
+    return {
+      kind: 'path',
+      d: `M ${nearStart.x} ${nearStart.y} L ${start.x} ${start.y} A ${outer} ${outer} 0 ${largeArc} 1 ${end.x} ${end.y} L ${nearEnd.x} ${nearEnd.y} A ${offset} ${offset} 0 0 0 ${nearStart.x} ${nearStart.y} Z`,
+    };
+  }
+
+  const halfSweep = ((sweep / 2) * Math.PI) / 180;
+  const tipDistance = offset / Math.sin(halfSweep);
+
+  if (sweep - 2 * edgeShift <= 0 || tipDistance >= outer) {
+    // Too thin to round: keep a visible dot near the rim so the share doesn't vanish.
+    const point = polarPoint(PIE_CENTER, PIE_RADIUS - SLICE_ROUND - 4, mid);
+    return { kind: 'dot', x: point.x, y: point.y, r: SLICE_ROUND / 2 + 2 };
+  }
+
+  const tip = polarPoint(PIE_CENTER, tipDistance, mid);
+  return {
+    kind: 'path',
+    d: `M ${tip.x} ${tip.y} L ${start.x} ${start.y} A ${outer} ${outer} 0 ${largeArc} 1 ${end.x} ${end.y} Z`,
+  };
+}
+
+function formatPercent(share: number) {
+  if (share > 0 && share < 0.005) return '<1%';
+  return `${Math.round(share * 100)}%`;
 }
 
 function polarPoint(center: number, radius: number, angle: number) {
@@ -645,11 +703,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 26,
   },
-  chartCenter: {
-    position: 'absolute',
-    width: '58%',
+  chartHeader: {
+    width: '100%',
     alignItems: 'center',
-    justifyContent: 'center',
+    marginBottom: 18,
   },
   chartLabel: {
     fontSize: 11,
